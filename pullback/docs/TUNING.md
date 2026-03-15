@@ -11,13 +11,13 @@ See `TUNEDATA.md` for test results.
 
 ## Tuning Targets
 
-| Metric | Target | Untuned baseline |
-|--------|--------|-----------------|
-| Net throughput | ~55 MB/s | 35 MB/s (drops to 16 over time) |
-| Disk throughput | ~55 MB/s | 31 MB/s (drops to 16 over time) |
-| Dirty pages | < 80 MB | 584 MB avg, 624 MB max |
+| Metric | Target | Untuned baseline | Achieved |
+|--------|--------|-----------------|----------|
+| Net throughput | ~55 MB/s | 35 MB/s (drops to 16 over time) | **121 MB/s** |
+| Disk throughput | ~55 MB/s | 31 MB/s (drops to 16 over time) | **114 MB/s** |
+| Dirty pages | < 80 MB | 584 MB avg, 624 MB max | **42 MB** |
 
-Previously achieved: 54-55 MB/s sustained, dirty pages 57-65 MB.
+Achieved with: dirty_ratio=5, EEE off, rsync daemon (no encryption). 3.5x baseline.
 
 ## Baseline problem (untuned)
 
@@ -270,6 +270,33 @@ folders from the same source.
 
 **Rationale (-T -x):** Eliminates pseudo-terminal and X11 overhead. Minor
 but free.
+
+### Transport: rsync daemon (no encryption)
+
+| Parameter | Default | Value | Status | Category |
+|-----------|---------|-------|--------|----------|
+| `transport` | ssh | rsync | proven | general |
+
+**Rationale:** SSH encryption consumes ~97% of one Pi CPU core during
+transfers. On a trusted home LAN, encryption provides no benefit. Rsync
+daemon mode (`rsyncd` on port 873) eliminates SSH entirely.
+
+**Measured:** 78 MB/s (SSH aes128-ctr) → 121 MB/s (daemon). 55% gain,
+reaching gigabit wire speed.
+
+**Setup:** See `RSYNCD.md` for server configuration.
+
+**Config:**
+```yaml
+sources:
+  pve:
+    transport: rsync
+    rsync_module: backup
+    remote_root: /
+```
+
+**Security:** LAN-only. `hosts allow` in rsyncd.conf restricts by IP.
+Module is `read only`. No encryption — do NOT use on untrusted networks.
 
 ---
 

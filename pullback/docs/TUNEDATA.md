@@ -97,6 +97,18 @@ Baseline: Net=54, Disk=57, Dirty=303. Targets: Net ~55, Disk ~55, Dirty <80.
 | 6 | dirty_expire=1000 | `sysctl -w vm.dirty_expire_centisecs=1000` | `sysctl -w vm.dirty_expire_centisecs=3000` | 54/53/53 (2m) | 53/51/50 (2m) | **NO — no improvement** |
 | 7 | dirty_writeback=500 | n/a | n/a | already default (500) | — | **SKIP — already at target value** |
 | 8 | SSH cipher aes128-ctr | config.local.yaml `ssh.cipher: aes128-ctr` | revert to aes128-gcm | 53/51/52 (2m, gcm) | 78/75/51 (1m, ctr) | **YES — 47% throughput gain. SSH was at 97% CPU with gcm.** |
+| 9 | rsync daemon (no encryption) | config.local.yaml `transport: rsync` | revert to `transport: ssh` | 78/75/51 (ctr) | 121/114/42 (1m, 29 samples) | **YES — 55% gain, gigabit wire speed. min Net=120, max=122.** |
+
+### Cumulative improvement (Samsung SSD 870 4TB)
+
+| Stage | Net | Disk | Dirty | Change |
+|-------|-----|------|-------|--------|
+| Untuned baseline | 35 MB/s | 31 MB/s | 584 MB | — |
+| + dirty_ratio=5 | 54 MB/s | 53 MB/s | 51 MB | +54% net |
+| + EEE off | 54 MB/s | 53 MB/s | 55 MB | prevents drops |
+| + aes128-ctr | 78 MB/s | 75 MB/s | 51 MB | +44% net |
+| + rsync daemon | 121 MB/s | 114 MB/s | 42 MB | +55% net |
+| **Total** | **121 MB/s** | **114 MB/s** | **42 MB** | **3.5x baseline** |
 
 ### HDD results (previous session, not individually recorded)
 
