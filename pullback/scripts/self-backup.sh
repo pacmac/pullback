@@ -74,7 +74,11 @@ fi
 # ── Create image ──
 
 START=$(date +%s)
-dd if="$SD_DEV" bs=4M status=none | gzip -1 > "$IMAGE"
+if command -v pigz &>/dev/null; then
+    dd if="$SD_DEV" bs=4M status=none | pigz -1 > "$IMAGE"
+else
+    dd if="$SD_DEV" bs=4M status=none | gzip -1 > "$IMAGE"
+fi
 ELAPSED=$(( $(date +%s) - START ))
 
 IMAGE_SIZE=$(stat -c%s "$IMAGE")
