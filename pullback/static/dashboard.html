@@ -15,6 +15,7 @@
     </div>
     <div class="header-right">
         <span class="poll-indicator" id="poll-dot"></span>
+        <button class="btn" onclick="selfBackup()" title="Image SD card to backup volume">Backup SD</button>
         <button class="btn" onclick="restartService()" title="Restart web service to reload config">Restart</button>
         <button class="btn btn-run" onclick="runAll()">Run All</button>
     </div>
@@ -279,6 +280,11 @@ async function pollLog() {
         el.scrollTop = el.scrollHeight;
     } catch(e) {}
     setTimeout(pollLog, 5000);
+}
+
+async function selfBackup() {
+    if (!confirm('Image the SD card to backup volume? This may take several minutes.')) return;
+    await fetch(API + '/api/self-backup', { method: 'POST' });
 }
 
 async function restartService() {

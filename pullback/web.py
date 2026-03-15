@@ -250,9 +250,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "message": "source required"}, 400)
         elif self.path == "/api/restart":
             self._json({"ok": True, "message": "restarting"})
-            # Restart the web service via systemd
             subprocess.Popen(["systemd-run", "--scope", "--quiet", "systemctl", "restart", "pullback-web"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif self.path == "/api/self-backup":
+            script = str(_BASE / "scripts" / "self-backup.sh")
+            keep = _cfg.get("self_backup", {}).get("keep", 2)
+            subprocess.Popen(
+                ["systemd-run", "--scope", "--quiet", "bash", script, f"--keep={keep}"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self._json({"ok": True, "message": "self-backup started"})
         else:
             self.send_error(404)
 
