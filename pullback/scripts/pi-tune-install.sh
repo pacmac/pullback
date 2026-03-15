@@ -112,15 +112,17 @@ BOOTEOF
 fi
 
 if [[ -n "$cpu_governor" ]]; then
-    cat >> "$TUNE_SCRIPT" <<BOOTEOF
+    cat >> "$TUNE_SCRIPT" <<'BOOTEOF'
 # CPU governor
 for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
-    if [[ -f "\\\$gov" ]]; then
-        echo ${cpu_governor} > "\\\$gov"
+    if [[ -f "$gov" ]]; then
+BOOTEOF
+    echo "        echo ${cpu_governor} > \"\$gov\"" >> "$TUNE_SCRIPT"
+    cat >> "$TUNE_SCRIPT" <<'BOOTEOF'
     fi
 done
-log "CPU governor set to ${cpu_governor}"
 BOOTEOF
+    echo "log \"CPU governor set to ${cpu_governor}\"" >> "$TUNE_SCRIPT"
 fi
 
 chmod +x "$TUNE_SCRIPT"
@@ -135,10 +137,10 @@ if [[ "$uas" == "true" ]]; then
     fi
 
     if [[ -f "$CMDLINE" ]]; then
-        USB_ID=$(lsusb | grep -i -E 'mass storage|external|canvio|seagate|wd|toshiba|hitachi|backup' | head -1 | grep -oP '\b[0-9a-f]{4}:[0-9a-f]{4}\b')
+        USB_ID=$(lsusb | grep -i -E 'mass storage|external|canvio|seagate|wd|toshiba|hitachi|backup' | head -1 | grep -oP '\b[0-9a-f]{4}:[0-9a-f]{4}\b' || true)
 
         if [[ -z "$USB_ID" ]]; then
-            USB_ID=$(lsusb | grep 'Bus 002' | grep -v 'root hub' | head -1 | grep -oP '\b[0-9a-f]{4}:[0-9a-f]{4}\b')
+            USB_ID=$(lsusb | grep 'Bus 002' | grep -v 'root hub' | head -1 | grep -oP '\b[0-9a-f]{4}:[0-9a-f]{4}\b' || true)
         fi
 
         if [[ -n "$USB_ID" ]]; then
