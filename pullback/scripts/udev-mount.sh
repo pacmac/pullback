@@ -1,10 +1,13 @@
 #!/bin/bash
-# udev-mount.sh — Auto-mount known pullback USB backup drives.
+# udev-mount.sh — Auto-mount pullback USB backup drives.
 # Called by udev rule. Runs in restricted environment — no interactive prompts.
 # Logs to syslog via logger.
 #
-# Known drive (UUID in fstab + flag file present): mount it.
-# Unknown drive: log and REFUSE. Use hd-init.sh --format to prepare new drives.
+# 1. Already mounted? Skip.
+# 2. UUID in fstab? Mount, verify flag file.
+# 3. Not in fstab? Temp-mount, check for flag file:
+#    - Flag found: adopt the drive (add fstab entry, keep mounted)
+#    - No flag: unmount, refuse. Use hd-init.sh --format for new drives.
 #
 # NEVER auto-formats. Formatting destroys data and must be explicitly requested.
 
@@ -23,8 +26,10 @@ die() { log "ERROR: $*"; exit 1; }
 
 MOUNT_POINT=$(grep '^mount_point:' "$CONFIG" | awk '{print $2}')
 FLAG_FILE=$(grep '^\s*flag_file:' "$CONFIG" | awk '{print $2}')
+FILESYSTEM=$(grep '^\s*filesystem:' "$CONFIG" | awk '{print $2}')
 
 [[ -n "$MOUNT_POINT" && -n "$FLAG_FILE" ]] || die "could not read mount_point or flag_file from config"
+: "${FILESYSTEM:=ext4}"
 
 # ── Get device from udev environment ──
 
@@ -62,9 +67,37 @@ if [[ -n "$UUID" ]] && grep -q "UUID=${UUID}" /etc/fstab 2>/dev/null; then
     exit 0
 fi
 
-# ── Unknown drive: refuse to mount ──
+# ── Unknown drive: temp-mount and check for flag file ──
 
-log "Unknown USB drive detected: ${DEVICE} (UUID=${UUID:-none}) — NOT mounting"
-log "To prepare this drive as a pullback volume, run:"
-log "  bash ${SCRIPT_DIR}/hd-init.sh ${DEVICE} --format"
+log "Unknown USB drive ${DEVICE} (UUID=${UUID:-none}) — checking for flag file"
+
+mkdir -p "$MOUNT_POINT"
+if ! mount -o ro "$DEVICE" "$MOUNT_POINT" 2>/dev/null; then
+    log "Cannot mount ${DEVICE} — not a valid filesystem, ignoring"
+    exit 0
+fi
+
+if [[ -f "${MOUNT_POINT}/${FLAG_FILE}" ]]; then
+    # This is a pullback volume from a previous install — adopt it
+    umount "$MOUNT_POINT"
+    log "Flag file found — adopting ${DEVICE} (UUID=${UUID}) as pullback volume"
+
+    # Add fstab entry
+    if [[ -n "$UUID" ]] && ! grep -q "UUID=${UUID}" /etc/fstab 2>/dev/null; then
+        echo "UUID=${UUID} ${MOUNT_POINT} ${FILESYSTEM} noatime,commit=60,nofail 0 2" >> /etc/fstab
+        log "Added fstab entry for UUID=${UUID}"
+        systemctl daemon-reload
+    fi
+
+    # Remount read-write
+    sleep 1
+    mount "$DEVICE" "$MOUNT_POINT" || die "failed to remount ${DEVICE} read-write"
+    log "Mounted pullback volume at ${MOUNT_POINT}"
+    exit 0
+fi
+
+# No flag file — not a pullback volume
+umount "$MOUNT_POINT" 2>/dev/null || true
+log "No flag file on ${DEVICE} — NOT a pullback volume, ignoring"
+log "To prepare this drive, run: bash ${SCRIPT_DIR}/hd-init.sh ${DEVICE} --format"
 exit 0
