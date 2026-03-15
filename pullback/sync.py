@@ -32,6 +32,10 @@ def build_command(source_cfg, folder_cfg, rsync_args, mount_point, ssh_cfg=None)
 
     args = list(rsync_args)
 
+    # Per-folder --delete (default: false)
+    if folder_cfg.get("delete", False):
+        args.append("--delete")
+
     # Build ssh command from config if ssh key is specified
     if ssh_cfg and ssh_cfg.get("key"):
         key_path = ssh_cfg["key"]

@@ -58,6 +58,7 @@ sources:
           keep: 2
 
       - path: shares/multimedia
+        delete: true
 
       # - path: shares/backups
       - path: shares/prox-backups/dump
