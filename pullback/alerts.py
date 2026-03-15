@@ -18,7 +18,7 @@ def send_alert(cfg, subject, body):
     msg["From"] = email_cfg["from"]
     msg["To"] = email_cfg["to"]
     msg["Subject"] = f"[pullback] {subject}"
-    msg["Date"] = datetime.now().strftime("%a, %d %b %Y %H:%M:%S %z")
+    msg["Date"] = datetime.now().astimezone().strftime("%a, %d %b %Y %H:%M:%S %z")
     msg.set_content(body)
 
     try:
