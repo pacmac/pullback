@@ -17,7 +17,7 @@ Measured improvement: 78 MB/s (SSH aes128-ctr) → ~110 MB/s (daemon, no encrypt
 uid = root
 gid = root
 use chroot = yes
-max connections = 2
+max connections = 4
 log file = /var/log/rsyncd.log
 
 [backup]

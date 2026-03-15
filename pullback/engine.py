@@ -108,10 +108,11 @@ def run_folder(source_name, source_cfg, folder_cfg, cfg, state):
         update_progress(source_name, p)
         # Live console progress
         import sys
+        cur_pct = p.get("overall_pct", 0)
         speed = p.get("speed", "")
         eta = p.get("eta", "")
         fname = p.get("current_file", "")
-        line = f"\r[{source_name}] {folder_path}  {pct}%  {speed}  ETA {eta}  {fname}"
+        line = f"\r[{source_name}] {folder_path}  {cur_pct}%  {speed}  ETA {eta}  {fname}"
         sys.stderr.write(f"{line:<100}\r")
         sys.stderr.flush()
 
