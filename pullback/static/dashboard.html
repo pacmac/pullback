@@ -206,9 +206,13 @@ async function poll() {
         const rxDrop = sys.rx_dropped || 0;
         const irqCpu0 = sys.softirq_cpu0_pct || 0;
 
+        const cfg = data.config || {};
+        const dirtyTarget = cfg.dirty_target || 80;
+        const diskWarnPct = cfg.disk_warn_pct || 90;
+
         const dirtyEl = document.getElementById('sys-dirty');
         dirtyEl.textContent = dirtyMb + ' MB';
-        dirtyEl.style.color = dirtyMb > 200 ? '#f85149' : dirtyMb > 100 ? '#d29922' : '#f0f6fc';
+        dirtyEl.style.color = dirtyMb > dirtyTarget * 2 ? '#f85149' : dirtyMb > dirtyTarget ? '#d29922' : '#f0f6fc';
 
         const rxEl = document.getElementById('sys-rxdrop');
         rxEl.textContent = rxDrop;
@@ -220,7 +224,7 @@ async function poll() {
 
         // Warnings
         let warnings = [];
-        if (dirtyMb > 200) warnings.push('Dirty pages high (' + dirtyMb + ' MB) — disk flush backlog');
+        if (dirtyMb > dirtyTarget) warnings.push('Dirty pages high (' + dirtyMb + ' MB, target <' + dirtyTarget + ') — disk flush backlog');
         if (irqCpu0 > 90) warnings.push('Network IRQs unbalanced (' + irqCpu0 + '% on CPU0) — enable RPS');
         if (rxDrop > 1000) warnings.push('RX packets dropped (' + rxDrop + ') — possible EEE or buffer issue');
         const warnEl = document.getElementById('sys-warnings');
@@ -235,7 +239,7 @@ async function poll() {
                 ? Math.round((sys.volume_total_gb - sys.volume_free_gb) / sys.volume_total_gb * 100) : 0;
             const bar = document.getElementById('disk-bar');
             bar.style.width = usedPct + '%';
-            bar.className = 'disk-fill ' + (usedPct > 90 ? 'danger' : usedPct > 70 ? 'warn' : 'ok');
+            bar.className = 'disk-fill ' + (usedPct > diskWarnPct ? 'danger' : usedPct > diskWarnPct - 20 ? 'warn' : 'ok');
             document.getElementById('disk-text').textContent =
                 sys.volume_free_gb + ' GB free / ' + sys.volume_total_gb + ' GB (' + (100-usedPct) + '%)';
             document.getElementById('volume-info').textContent = '/backup mounted';

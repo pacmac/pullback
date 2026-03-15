@@ -157,6 +157,10 @@ def _get_status():
     return {
         "sources": sources,
         "system": _get_system_stats(),
+        "config": {
+            "disk_warn_pct": _cfg.get("disk_warn_pct", 90),
+            "dirty_target": 80,
+        },
     }
 
 
