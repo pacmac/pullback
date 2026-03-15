@@ -136,7 +136,6 @@ function renderSource(name, src) {
         html += '<div class="progress-details">';
         html += '<span>' + (progress.speed || '--') + '</span>';
         html += '<span>' + fmtBytes(progress.bytes_transferred) + '</span>';
-        html += '<span>ETA ' + (progress.eta || '--') + '</span>';
         html += '<span>' + fmtDuration(progress.elapsed) + ' elapsed</span>';
         html += '</div>';
         html += '<div class="progress-file">' + (progress.current_file || '') + '</div>';

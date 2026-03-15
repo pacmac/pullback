@@ -86,15 +86,12 @@ def run_folder(source_name, source_cfg, folder_cfg, cfg, state):
         p["step"] = f"syncing {folder_path}"
         p["source"] = source_name
 
-        # Smoothed ETA based on elapsed time and percentage
-        pct = p.get("overall_pct", 0)
+        # Replace rsync's volatile ETA with elapsed time
         elapsed = time.time() - sync_start
-        if pct > 1 and elapsed > 5:
-            total_est = elapsed * 100 / pct
-            remaining = total_est - elapsed
-            mins, secs = divmod(int(remaining), 60)
-            hours, mins = divmod(mins, 60)
-            p["eta"] = f"{hours}:{mins:02d}:{secs:02d}"
+        mins, secs = divmod(int(elapsed), 60)
+        hours, mins = divmod(mins, 60)
+        p["elapsed"] = int(elapsed)
+        p["eta"] = ""  # suppress rsync's unstable ETA
 
         update_progress(source_name, p)
         # Live console progress
