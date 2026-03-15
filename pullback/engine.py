@@ -293,7 +293,36 @@ def run_all(cfg, source_filter=None, folder_filter=None):
         if not ok:
             all_ok = False
 
+    # Self-backup: image SD card after sync completes
+    if cfg.get("self_backup", {}).get("enabled", False) and not source_filter:
+        _run_self_backup(cfg)
+
     return all_ok
+
+
+def _run_self_backup(cfg):
+    """Run self-backup.sh to image the SD card."""
+    script = str(Path(__file__).parent / "scripts" / "self-backup.sh")
+    keep = cfg.get("self_backup", {}).get("keep", 2)
+    if not Path(script).exists():
+        log.warning("self-backup.sh not found, skipping")
+        return
+    log.info("Starting self-backup (SD card image)")
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["bash", script, f"--keep={keep}"],
+            capture_output=True, text=True, timeout=3600,
+        )
+        for line in result.stdout.strip().split("\n"):
+            if line:
+                log.info(line)
+        if result.returncode != 0:
+            log.error(f"Self-backup failed: {result.stderr.strip()}")
+    except subprocess.TimeoutExpired:
+        log.error("Self-backup timed out (1 hour)")
+    except Exception as e:
+        log.error(f"Self-backup error: {e}")
 
 
 def _now():

@@ -296,6 +296,34 @@ sudo bash scripts/pi-tune-install.sh
 
 Reads merged config (config.yaml + config.local.yaml) and writes sysctl + systemd boot service.
 
+## Self-Backup (Disaster Recovery)
+
+pullBack can image the entire SD card to the backup volume after each sync. If the SD card dies, write the image to a new card and boot.
+
+### Config
+
+```yaml
+self_backup:
+  enabled: true
+  keep: 2          # Number of images to retain
+```
+
+### Manual run
+
+```bash
+sudo bash scripts/self-backup.sh
+sudo bash scripts/self-backup.sh --keep=3
+```
+
+### Restore
+
+```bash
+# From another machine, write the image to a new SD card
+gunzip -c /path/to/pullback-sd-2026-03-15.img.gz | dd of=/dev/sdX bs=4M status=progress
+```
+
+Images are stored in `/backup/.self-backup/` and auto-pruned to the configured `keep` count.
+
 ## USB Drive Management
 
 ### Flag file safety

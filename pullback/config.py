@@ -87,6 +87,11 @@ def _apply_defaults(cfg):
     cfg.setdefault("web_host", "0.0.0.0")
     cfg.setdefault("disk_warn_pct", 90)
 
+    cfg.setdefault("self_backup", {})
+    sb = cfg["self_backup"]
+    sb.setdefault("enabled", False)
+    sb.setdefault("keep", 2)
+
     cfg.setdefault("ransomware", {})
     rw = cfg["ransomware"]
     rw.setdefault("enabled", False)
