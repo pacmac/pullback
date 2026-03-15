@@ -10,11 +10,14 @@
 
 ## System
 - Raspberry Pi 4, 4GB RAM
-- USB 3.0 HDD: Toshiba Canvio Advance 4TB (0480:0820, Bulk-Only, no UAS)
 - Gigabit Ethernet (bcmgenet)
 - rsync over SSH (aes128-gcm cipher)
 
-## Baseline (untuned, Debian defaults)
+### Drive: USB 3.0 SSD 112GB (current)
+
+### Drive: USB 3.0 HDD Toshiba Canvio Advance 4TB (0480:0820, Bulk-Only, no UAS) (previous)
+
+## Baseline — SSD (untuned, Debian defaults, 2026-03-15)
 
 Settings:
 ```
@@ -23,15 +26,40 @@ vm.dirty_background_ratio = 10
 vm.dirty_expire_centisecs = 3000
 vm.dirty_writeback_centisecs = 500
 Governor: ondemand
-RPS: disabled
-EEE: enabled
-I/O scheduler: (check with cat /sys/block/sda/queue/scheduler)
-Read-ahead: 256 sectors (128 KB)
+RPS: disabled (0)
+EEE: enabled - active
+I/O scheduler: mq-deadline
+Read-ahead: 131064 sectors
 rsync: --archive --numeric-ids --partial --info=progress2,name1
 SSH cipher: aes128-gcm@openssh.com
 ```
 
-Results (20s sample, fresh install 2026-03-15, sync running ~30 mins):
+Results (10s sample, sync running):
+```
+CPU:    avg=42%  max=47%
+Net:    avg=54 MB/s  max=55 MB/s    ✓ at target
+Disk:   avg=57 MB/s  max=89 MB/s    ✓ at target
+Dirty:  avg=303 MB  max=334 MB      ✗ above target (<80)
+```
+
+## Baseline — HDD (untuned, Debian defaults, 2026-03-15)
+
+Settings:
+```
+vm.dirty_ratio = 20
+vm.dirty_background_ratio = 10
+vm.dirty_expire_centisecs = 3000
+vm.dirty_writeback_centisecs = 500
+Governor: ondemand
+RPS: disabled (0)
+EEE: enabled - active
+I/O scheduler: mq-deadline
+Read-ahead: 256 sectors
+rsync: --archive --numeric-ids --partial --info=progress2,name1
+SSH cipher: aes128-gcm@openssh.com
+```
+
+Results (20s sample, fresh install, sync running ~30 mins):
 ```
 CPU:    avg=60%  max=71%
 Disk:   avg=31 MB/s  max=45 MB/s
