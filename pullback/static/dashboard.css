@@ -156,8 +156,8 @@ h2 { color: #8b949e; margin: 20px 0 10px; font-size: 1.1em; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn-group { display: flex; gap: 8px; }
-.btn-folder-run { background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 2px 8px; border-radius: 3px; cursor: pointer; font-size: 0.8em; margin-right: 6px; }
-.btn-folder-run:hover { background: #238636; color: #fff; border-color: #2ea043; }
+.btn-folder-run { background: #238636; border: 1px solid #2ea043; color: #fff; padding: 3px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85em; margin-right: 8px; font-weight: 600; }
+.btn-folder-run:hover { background: #2ea043; }
 
 /* Disk usage bar */
 .disk-bar {
