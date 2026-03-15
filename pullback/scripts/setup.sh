@@ -58,20 +58,27 @@ run bash "${SCRIPT_DIR}/pyenv-setup.sh"
 # ── Step 2: SSH keys ──
 
 log "--- Step 2: SSH keys ---"
-if [[ -d "${PROJECT_DIR}/keys" ]] && ls "${PROJECT_DIR}/keys/"* &>/dev/null; then
-    log "SSH keys already present in keys/"
+KEY_DIR="${PROJECT_DIR}/keys"
+KEY_FILE="${KEY_DIR}/id_ed25519"
+mkdir -p "$KEY_DIR"
+if [[ -f "$KEY_FILE" ]]; then
+    log "SSH key already exists: ${KEY_FILE}"
 else
-    log "No SSH keys found in keys/ — configure manually or run ssh-setup.sh"
+    run ssh-keygen -t ed25519 -N "" -f "$KEY_FILE" -C "pullback@$(hostname)"
+    log "Generated SSH key: ${KEY_FILE}"
+    log "  >>> Copy pubkey to your remote host(s): <<<"
+    log "  ssh-copy-id -i ${KEY_FILE} root@YOUR_HOST"
 fi
 
 # ── Step 3: Config check ──
 
-log "--- Step 3: Config check ---"
+log "--- Step 3: Local config ---"
 if [[ -f "${PROJECT_DIR}/config.local.yaml" ]]; then
-    log "config.local.yaml found"
+    log "config.local.yaml already exists"
 else
-    log "WARNING: config.local.yaml not found"
-    log "  Copy config.local.yaml.example and add your SMTP credentials"
+    run cp "${PROJECT_DIR}/config.local.yaml.example" "${PROJECT_DIR}/config.local.yaml"
+    log "Created config.local.yaml from example"
+    log "  >>> Edit ${PROJECT_DIR}/config.local.yaml with your SMTP credentials <<<"
 fi
 
 # ── Step 4: udev auto-mount ──
@@ -92,9 +99,10 @@ log "pullback setup complete."
 log "============================================"
 echo ""
 log "Next steps:"
-log "  1. Copy config.local.yaml.example to config.local.yaml and add credentials"
+log "  1. Edit ${PROJECT_DIR}/config.local.yaml with SMTP credentials"
 log "  2. Edit config.yaml with your sources"
-log "  3. Configure SSH access to your remote hosts"
+log "  3. Copy SSH pubkey to remote host(s):"
+log "     ssh-copy-id -i ${PROJECT_DIR}/keys/id_ed25519 root@YOUR_HOST"
 log "  4. Connect a USB drive (auto-formatted on first plug-in)"
 log "  5. Test: ${PROJECT_DIR}/venv/bin/python3 ${PROJECT_DIR}/cli.py sync"
 log "  6. Dashboard: http://$(hostname -I 2>/dev/null | awk '{print $1}'):8080/"
