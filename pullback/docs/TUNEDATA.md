@@ -83,17 +83,21 @@ Read-ahead:  256 sectors
 Test each parameter individually. Record 30s sample with
 `scripts/pi-bottleneck.sh --runsec=30` during active sync.
 
-### Proven parameters (from initial tuning session)
+### SSD test results (2026-03-15)
 
-| # | Parameter | Before | After | Keep? |
-|---|-----------|--------|-------|-------|
-| 1 | governor=performance | (pending) | (pending) | (pending) |
-| 2 | RPS on CPU2+3 | (pending) | (pending) | (pending) |
-| 3 | EEE off | (pending) | (pending) | (pending) |
-| 4 | dirty_ratio=5 | (pending) | (pending) | (pending) |
-| 5 | dirty_bg_ratio=2 | (pending) | (pending) | (pending) |
-| 6 | dirty_expire=1000 | (pending) | (pending) | (pending) |
-| 7 | dirty_writeback=500 | (pending) | (pending) | (pending) |
+Baseline: Net=54, Disk=57, Dirty=303. Targets: Net ~55, Disk ~55, Dirty <80.
+
+| # | Parameter | Apply | Revert | Before (Net/Disk/Dirty) | After (Net/Disk/Dirty) | Keep? |
+|---|-----------|-------|--------|------------------------|----------------------|-------|
+| 1 | governor=performance | `echo performance \| tee cpu*/scaling_governor` | `echo ondemand \| tee ...` | 35/32/565 | 21/25/576 | **NO — throughput dropped** |
+| 2 | dirty_ratio=5 + bg=2 | `sysctl -w vm.dirty_ratio=5 vm.dirty_background_ratio=2` | `sysctl -w vm.dirty_ratio=20 vm.dirty_background_ratio=10` | 54/57/303 | 54/53/51 | **YES — dirty 303→51, throughput maintained** |
+| 3 | dirty_bytes=48MB | `sysctl -w vm.dirty_bytes=50331648 vm.dirty_background_bytes=16777216` | `sysctl -w vm.dirty_bytes=0 vm.dirty_background_bytes=0` | — | — | **NO — stalled system completely** |
+| 4 | RPS on CPU2+3 | (pending) | (pending) | (pending) | (pending) | (pending) |
+| 5 | EEE off | (pending) | (pending) | (pending) | (pending) | (pending) |
+| 6 | dirty_expire=1000 | (pending) | (pending) | (pending) | (pending) | (pending) |
+| 7 | dirty_writeback=500 | (pending) | (pending) | (pending) | (pending) | (pending) |
+
+### HDD results (previous session, not individually recorded)
 
 **Known good result (all 7 combined):** 54-55 MB/s, dirty pages 57-65 MB.
 Individual per-parameter results were not recorded in the initial session.
