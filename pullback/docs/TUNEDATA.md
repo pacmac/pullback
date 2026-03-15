@@ -89,12 +89,12 @@ Baseline: Net=54, Disk=57, Dirty=303. Targets: Net ~55, Disk ~55, Dirty <80.
 
 | # | Parameter | Apply | Revert | Before (Net/Disk/Dirty) | After (Net/Disk/Dirty) | Keep? |
 |---|-----------|-------|--------|------------------------|----------------------|-------|
-| 1 | governor=performance | `echo performance \| tee cpu*/scaling_governor` | `echo ondemand \| tee ...` | 35/32/565 | 21/25/576 | **NO — throughput dropped** |
+| 1 | governor=performance | `echo performance \| tee cpu*/scaling_governor` | `echo ondemand \| tee ...` | 54/53/53 (2m) | 54/51/53 (2m) | **NO — no throughput gain** |
 | 2 | dirty_ratio=5 + bg=2 | `sysctl -w vm.dirty_ratio=5 vm.dirty_background_ratio=2` | `sysctl -w vm.dirty_ratio=20 vm.dirty_background_ratio=10` | 54/57/303 | 54/53/51 | **YES — dirty 303→51, throughput maintained** |
 | 3 | dirty_bytes=48MB | `sysctl -w vm.dirty_bytes=50331648 vm.dirty_background_bytes=16777216` | `sysctl -w vm.dirty_bytes=0 vm.dirty_background_bytes=0` | — | — | **NO — stalled system completely** |
-| 4 | RPS on CPU2+3 | `echo c > rps_cpus; echo 32768 > rps_sock_flow_entries` | `echo 0 > rps_cpus; echo 0 > rps_sock_flow_entries` | 54/53/51 | 48/46/48 | **NO — throughput dropped 11%** |
+| 4 | RPS on CPU2+3 | `echo c > rps_cpus; echo 32768 > rps_sock_flow_entries` | `echo 0 > rps_cpus; echo 0 > rps_sock_flow_entries` | 54/53/53 (2m) | 52/49/52 (2m) | **NO — throughput dropped, adds overhead** |
 | 5 | EEE off | `ethtool --set-eee eth0 eee off` | `ethtool --set-eee eth0 eee on` | 54/53/51 | 54/53/55 | **YES — same throughput, prevents long-run drops** |
-| 6 | dirty_expire=1000 | `sysctl -w vm.dirty_expire_centisecs=1000` | `sysctl -w vm.dirty_expire_centisecs=3000` | 54/53/55 | 54/52/52 | **NO — no improvement** |
+| 6 | dirty_expire=1000 | `sysctl -w vm.dirty_expire_centisecs=1000` | `sysctl -w vm.dirty_expire_centisecs=3000` | 54/53/53 (2m) | 53/51/50 (2m) | **NO — no improvement** |
 | 7 | dirty_writeback=500 | n/a | n/a | already default (500) | — | **SKIP — already at target value** |
 
 ### HDD results (previous session, not individually recorded)
