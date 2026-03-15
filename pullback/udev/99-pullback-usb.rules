@@ -1,4 +1,4 @@
-# Auto-mount pullback backup drives on USB plug-in
+# Auto-mount KNOWN pullback backup drives on USB plug-in (never formats)
 # Triggers a systemd service instead of mounting directly (udev blocks device access during RUN)
 ACTION=="add", SUBSYSTEM=="block", KERNEL=="sd[a-z]", ENV{DEVTYPE}=="disk", \
   TAG+="systemd", ENV{SYSTEMD_WANTS}="pullback-mount@%k.service"
