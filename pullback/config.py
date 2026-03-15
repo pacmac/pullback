@@ -85,6 +85,7 @@ def _apply_defaults(cfg):
     """Apply default values for optional fields."""
     cfg.setdefault("web_port", 8080)
     cfg.setdefault("web_host", "0.0.0.0")
+    cfg.setdefault("disk_warn_pct", 90)
 
     cfg.setdefault("ransomware", {})
     rw = cfg["ransomware"]

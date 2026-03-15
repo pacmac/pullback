@@ -121,6 +121,22 @@ def alert_sync_start(cfg, source_name, source_cfg, folders):
     send_alert(cfg, subject, body)
 
 
+def alert_disk_space(cfg, mount, used_pct, free_gb, total_gb):
+    """Send disk space warning alert."""
+    email_cfg = cfg.get("email", {})
+    if not email_cfg.get("enabled") or not email_cfg.get("on_warning", True):
+        return
+
+    subject = f"DISK SPACE WARNING: {mount} {used_pct}% full"
+    body = "\n".join([
+        f"Backup volume at {mount} is {used_pct}% full.",
+        f"Free: {free_gb:.1f} GB / {total_gb:.1f} GB total",
+        "",
+        "Action: free space, rotate old backups, or connect a larger drive.",
+    ])
+    send_alert(cfg, subject, body)
+
+
 def alert_no_volume(cfg):
     """Send volume missing alert."""
     email_cfg = cfg.get("email", {})

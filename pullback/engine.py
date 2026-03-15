@@ -228,6 +228,26 @@ def run_all(cfg, source_filter=None, folder_filter=None):
             pass
         return False
 
+    # Check disk space
+    mount = cfg["mount_point"]
+    disk_warn_pct = cfg.get("disk_warn_pct", 90)
+    try:
+        st = os.statvfs(mount)
+        total = st.f_blocks * st.f_frsize
+        free = st.f_bavail * st.f_frsize
+        used_pct = round(100 - (free * 100 / total)) if total > 0 else 0
+        total_gb = total / 1024**3
+        free_gb = free / 1024**3
+        if used_pct >= disk_warn_pct:
+            log.warning(f"Disk space warning: {mount} is {used_pct}% full ({free_gb:.1f} GB free)")
+            try:
+                from alerts import alert_disk_space
+                alert_disk_space(cfg, mount, used_pct, free_gb, total_gb)
+            except ImportError:
+                pass
+    except OSError:
+        pass
+
     all_ok = True
 
     for source_name, source_cfg in cfg["sources"].items():
