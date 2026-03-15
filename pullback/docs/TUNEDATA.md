@@ -1,5 +1,13 @@
 # Tuning Test Data
 
+## Targets
+
+| Metric | Target |
+|--------|--------|
+| Net throughput | ~55 MB/s |
+| Disk throughput | ~55 MB/s |
+| Dirty pages | < 80 MB |
+
 ## System
 - Raspberry Pi 4, 4GB RAM
 - USB 3.0 HDD: Toshiba Canvio Advance 4TB (0480:0820, Bulk-Only, no UAS)

@@ -9,6 +9,16 @@ tuning parameters, their rationale, and status.
 See `TUNEDEFAULT.md` for OS/kernel factory defaults.
 See `TUNEDATA.md` for test results.
 
+## Tuning Targets
+
+| Metric | Target | Untuned baseline |
+|--------|--------|-----------------|
+| Net throughput | ~55 MB/s | 35 MB/s (drops to 16 over time) |
+| Disk throughput | ~55 MB/s | 31 MB/s (drops to 16 over time) |
+| Dirty pages | < 80 MB | 584 MB avg, 624 MB max |
+
+Previously achieved: 54-55 MB/s sustained, dirty pages 57-65 MB.
+
 ## Baseline problem (untuned)
 
 Measured over 12 hours of continuous rsync from proxmox.home to Pi 4 USB HDD:

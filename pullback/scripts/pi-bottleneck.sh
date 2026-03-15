@@ -28,15 +28,17 @@ summary() {
         AVG_DISK=$((SUM_DISK / SAMPLES))
         AVG_NET=$((SUM_NET / SAMPLES))
         AVG_DIRTY=$((SUM_DIRTY / SAMPLES))
-        # THROUGHPUT SCORE — the only number that matters for tuning decisions
+        # Targets: Net ~55 MB/s, Disk ~55 MB/s, Dirty < 80 MB
         echo ""
         echo "  ============================================"
-        echo "  THROUGHPUT:  ${AVG_NET} MB/s  (avg net)"
+        echo "  Net:    ${AVG_NET} MB/s   (target: ~55)"
+        echo "  Disk:   ${AVG_DISK} MB/s   (target: ~55)"
+        echo "  Dirty:  ${AVG_DIRTY} MB     (target: <80)"
         echo "  ============================================"
         echo ""
         echo "  CPU:    avg=${AVG_CPU}%  max=${MAX_CPU}%"
-        echo "  Disk:   avg=${AVG_DISK} MB/s  max=${MAX_DISK} MB/s"
         echo "  Net:    avg=${AVG_NET} MB/s  max=${MAX_NET} MB/s"
+        echo "  Disk:   avg=${AVG_DISK} MB/s  max=${MAX_DISK} MB/s"
         echo "  Dirty:  avg=${AVG_DIRTY} MB  max=${MAX_DIRTY} MB"
 
         # Tuning state snapshot
