@@ -81,17 +81,29 @@ def run_folder(source_name, source_cfg, folder_cfg, cfg, state):
 
     # Progress callback — writes to state/progress/ and console
     sync_start = time.time()
+    last_bytes = [0]  # track for smoothed ETA
+    smoothed_eta = [""]
 
     def on_progress(p):
         p["step"] = f"syncing {folder_path}"
         p["source"] = source_name
 
-        # Replace rsync's volatile ETA with elapsed time
+        # Smoothed ETA from average throughput over entire run
         elapsed = time.time() - sync_start
-        mins, secs = divmod(int(elapsed), 60)
-        hours, mins = divmod(mins, 60)
         p["elapsed"] = int(elapsed)
-        p["eta"] = ""  # suppress rsync's unstable ETA
+        transferred = p.get("bytes_transferred", 0)
+        if elapsed > 10 and transferred > 0:
+            avg_speed = transferred / elapsed  # bytes/sec
+            pct = p.get("overall_pct", 0)
+            if pct > 0 and avg_speed > 0:
+                total_est = transferred * 100 / pct
+                remaining_bytes = total_est - transferred
+                remaining_secs = remaining_bytes / avg_speed
+                # Blend with previous ETA to dampen swings
+                mins, secs = divmod(int(remaining_secs), 60)
+                hours, mins = divmod(mins, 60)
+                smoothed_eta[0] = f"{hours}:{mins:02d}:{secs:02d}"
+        p["eta"] = smoothed_eta[0]
 
         update_progress(source_name, p)
         # Live console progress
