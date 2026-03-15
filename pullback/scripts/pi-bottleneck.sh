@@ -28,24 +28,16 @@ summary() {
         AVG_DISK=$((SUM_DISK / SAMPLES))
         AVG_NET=$((SUM_NET / SAMPLES))
         AVG_DIRTY=$((SUM_DIRTY / SAMPLES))
+        # THROUGHPUT SCORE — the only number that matters for tuning decisions
+        echo ""
+        echo "  ============================================"
+        echo "  THROUGHPUT:  ${AVG_NET} MB/s  (avg net)"
+        echo "  ============================================"
+        echo ""
         echo "  CPU:    avg=${AVG_CPU}%  max=${MAX_CPU}%"
         echo "  Disk:   avg=${AVG_DISK} MB/s  max=${MAX_DISK} MB/s"
         echo "  Net:    avg=${AVG_NET} MB/s  max=${MAX_NET} MB/s"
         echo "  Dirty:  avg=${AVG_DIRTY} MB  max=${MAX_DIRTY} MB"
-        echo ""
-
-        # Bottleneck detection
-        if [[ $MAX_CPU -gt 90 ]]; then
-            echo "  >> BOTTLENECK: CPU (likely SSH encryption)"
-        elif [[ $MAX_NET -lt 10 ]]; then
-            echo "  >> BOTTLENECK: Network"
-        elif [[ $MAX_DISK -lt 20 ]]; then
-            echo "  >> BOTTLENECK: Disk IO"
-        elif [[ $MAX_DIRTY -gt 200 ]]; then
-            echo "  >> WARNING: Dirty pages high — disk flush backlog"
-        else
-            echo "  >> No clear bottleneck"
-        fi
 
         # Tuning state snapshot
         echo ""

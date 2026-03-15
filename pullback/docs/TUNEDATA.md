@@ -23,12 +23,21 @@ rsync: --archive --numeric-ids --partial --info=progress2,name1
 SSH cipher: aes128-gcm@openssh.com
 ```
 
-Results (30s sample, sync running ~2 mins):
+Results (20s sample, fresh install 2026-03-15, sync running ~30 mins):
 ```
-CPU:   avg 55%  max 67%
-Disk:  avg 24 MB/s  max 41 MB/s
-Net:   avg 23 MB/s  max 37 MB/s
-Dirty: 613-640 MB (growing)
+CPU:    avg=60%  max=71%
+Disk:   avg=31 MB/s  max=45 MB/s
+Net:    avg=35 MB/s  max=54 MB/s
+Dirty:  avg=584 MB  max=624 MB
+
+Governor:    ondemand
+RPS:         0 (disabled)
+EEE:         enabled - active
+NET_RX:      CPU0=12885931 CPU1=0 CPU2=25 CPU3=10
+RX dropped:  1
+Dirty cfg:   ratio=20 bg_ratio=10
+Scheduler:   mq-deadline (default)
+Read-ahead:  256 sectors
 ```
 
 ---
