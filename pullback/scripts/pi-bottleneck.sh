@@ -9,6 +9,9 @@ for arg in "$@"; do
     esac
 done
 
+# Detect backup disk device from /backup mount
+DISK_DEV=$(findmnt -n -o SOURCE /backup 2>/dev/null | xargs basename 2>/dev/null || echo "sda")
+
 SAMPLES=0
 SUM_CPU=0
 SUM_DISK=0
@@ -77,11 +80,11 @@ summary() {
         fi
 
         # I/O scheduler
-        SCHED=$(cat /sys/block/sda/queue/scheduler 2>/dev/null || echo "no sda")
+        SCHED=$(cat /sys/block/${DISK_DEV}/queue/scheduler 2>/dev/null || echo "no ${DISK_DEV}")
         echo "  Scheduler:   ${SCHED}"
 
         # Read-ahead
-        RA=$(blockdev --getra /dev/sda 2>/dev/null || echo "n/a")
+        RA=$(blockdev --getra /dev/${DISK_DEV} 2>/dev/null || echo "n/a")
         echo "  Read-ahead:  ${RA} sectors"
     fi
     exit 0
@@ -95,7 +98,7 @@ while true; do
     # Snapshot 1
     read CPU_IDLE1 < <(awk '/^cpu /{print $5}' /proc/stat)
     read CPU_TOTAL1 < <(awk '/^cpu /{print $2+$3+$4+$5+$6+$7+$8}' /proc/stat)
-    DISK_SECTORS1=$(awk '/sda /{print $6+$10}' /proc/diskstats 2>/dev/null) || DISK_SECTORS1=0
+    DISK_SECTORS1=$(awk "/${DISK_DEV} /"'{print $6+$10}' /proc/diskstats 2>/dev/null) || DISK_SECTORS1=0
     RX1=$(cat /sys/class/net/eth0/statistics/rx_bytes 2>/dev/null) || RX1=0
     TX1=$(cat /sys/class/net/eth0/statistics/tx_bytes 2>/dev/null) || TX1=0
 
@@ -104,7 +107,7 @@ while true; do
     # Snapshot 2
     read CPU_IDLE2 < <(awk '/^cpu /{print $5}' /proc/stat)
     read CPU_TOTAL2 < <(awk '/^cpu /{print $2+$3+$4+$5+$6+$7+$8}' /proc/stat)
-    DISK_SECTORS2=$(awk '/sda /{print $6+$10}' /proc/diskstats 2>/dev/null) || DISK_SECTORS2=0
+    DISK_SECTORS2=$(awk "/${DISK_DEV} /"'{print $6+$10}' /proc/diskstats 2>/dev/null) || DISK_SECTORS2=0
     RX2=$(cat /sys/class/net/eth0/statistics/rx_bytes 2>/dev/null) || RX2=0
     TX2=$(cat /sys/class/net/eth0/statistics/tx_bytes 2>/dev/null) || TX2=0
 

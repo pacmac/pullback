@@ -72,8 +72,8 @@ Use these to revert any change that doesn't show measurable improvement.
 
 | Parameter | Value |
 |-----------|-------|
-| I/O scheduler (sda) | $(cat /sys/block/sda/queue/scheduler 2>/dev/null || echo "no sda") |
-| Read-ahead (sda) | $(blockdev --getra /dev/sda 2>/dev/null || echo "no sda") sectors |
+| I/O scheduler | $(BDEV=$(findmnt -n -o SOURCE /backup 2>/dev/null | xargs basename 2>/dev/null); cat /sys/block/${BDEV:-sda}/queue/scheduler 2>/dev/null || echo "not mounted") |
+| Read-ahead | $(BDEV=$(findmnt -n -o SOURCE /backup 2>/dev/null); blockdev --getra ${BDEV:-/dev/sda} 2>/dev/null || echo "not mounted") sectors |
 
 ## Existing sysctl overrides
 

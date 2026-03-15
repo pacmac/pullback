@@ -28,6 +28,21 @@ def _read_int(path, default=0):
         return default
 
 
+def _get_backup_disk():
+    """Find the block device name backing the backup mount point."""
+    try:
+        mount = _cfg["mount_point"]
+        with open("/proc/mounts") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2 and parts[1] == mount:
+                    dev = parts[0]  # e.g. /dev/sdb
+                    return os.path.basename(dev)  # e.g. sdb
+    except (OSError, KeyError):
+        pass
+    return None
+
+
 def _get_system_stats():
     """Collect system stats from /proc. Returns cached values, updates every 2s."""
     global _sys_prev, _sys_cache
@@ -45,15 +60,17 @@ def _get_system_stats():
     except (OSError, ValueError, IndexError):
         cpu_total = cpu_idle = 0
 
-    # Disk from /proc/diskstats (sda)
+    # Disk from /proc/diskstats — find the device backing /backup
     disk_sectors = 0
     try:
-        with open("/proc/diskstats") as f:
-            for line in f:
-                fields = line.split()
-                if len(fields) >= 10 and fields[2] == "sda":
-                    disk_sectors = int(fields[5]) + int(fields[9])
-                    break
+        disk_dev = _get_backup_disk()
+        if disk_dev:
+            with open("/proc/diskstats") as f:
+                for line in f:
+                    fields = line.split()
+                    if len(fields) >= 10 and fields[2] == disk_dev:
+                        disk_sectors = int(fields[5]) + int(fields[9])
+                        break
     except (OSError, ValueError):
         pass
 
