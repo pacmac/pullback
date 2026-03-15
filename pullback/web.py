@@ -215,6 +215,8 @@ class Handler(BaseHTTPRequestHandler):
             self._file(_STATIC / "dashboard.html", "text/html")
         elif self.path == "/static/dashboard.css":
             self._file(_STATIC / "dashboard.css", "text/css")
+        elif self.path == "/static/favicon.svg" or self.path == "/favicon.ico":
+            self._file(_STATIC / "favicon.svg", "image/svg+xml")
         elif self.path == "/api/status":
             self._json(_get_status())
         elif self.path.startswith("/api/log"):
