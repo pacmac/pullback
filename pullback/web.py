@@ -248,6 +248,11 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "message": "cancel requested"})
             else:
                 self._json({"ok": False, "message": "source required"}, 400)
+        elif self.path == "/api/restart":
+            self._json({"ok": True, "message": "restarting"})
+            # Restart the web service via systemd
+            subprocess.Popen(["systemd-run", "--scope", "--quiet", "systemctl", "restart", "pullback-web"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         else:
             self.send_error(404)
 

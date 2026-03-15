@@ -15,6 +15,7 @@
     </div>
     <div class="header-right">
         <span class="poll-indicator" id="poll-dot"></span>
+        <button class="btn" onclick="restartService()" title="Restart web service to reload config">Restart</button>
         <button class="btn btn-run" onclick="runAll()">Run All</button>
     </div>
 </div>
@@ -278,6 +279,12 @@ async function pollLog() {
         el.scrollTop = el.scrollHeight;
     } catch(e) {}
     setTimeout(pollLog, 5000);
+}
+
+async function restartService() {
+    if (!confirm('Restart pullback-web service? This reloads config.')) return;
+    await fetch(API + '/api/restart', { method: 'POST' });
+    setTimeout(() => location.reload(), 2000);
 }
 
 async function runAll() {
