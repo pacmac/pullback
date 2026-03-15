@@ -250,7 +250,7 @@ sync.
 
 | Parameter | Default | Value | Status | Category |
 |-----------|---------|-------|--------|----------|
-| Cipher (Pi) | negotiated | `aes128-ctr` | proposed | pi |
+| Cipher (Pi) | negotiated | `aes128-ctr` | proven | pi |
 | Cipher (x86/AES-NI) | negotiated | `aes128-gcm@openssh.com` | proven | general |
 | `-T` (no pseudo-tty) | allocated | disabled | proposed | general |
 | `-x` (no X11) | off | off | proposed | general |

@@ -96,6 +96,7 @@ Baseline: Net=54, Disk=57, Dirty=303. Targets: Net ~55, Disk ~55, Dirty <80.
 | 5 | EEE off | `ethtool --set-eee eth0 eee off` | `ethtool --set-eee eth0 eee on` | 54/53/51 | 54/53/55 | **YES — same throughput, prevents long-run drops** |
 | 6 | dirty_expire=1000 | `sysctl -w vm.dirty_expire_centisecs=1000` | `sysctl -w vm.dirty_expire_centisecs=3000` | 54/53/53 (2m) | 53/51/50 (2m) | **NO — no improvement** |
 | 7 | dirty_writeback=500 | n/a | n/a | already default (500) | — | **SKIP — already at target value** |
+| 8 | SSH cipher aes128-ctr | config.local.yaml `ssh.cipher: aes128-ctr` | revert to aes128-gcm | 53/51/52 (2m, gcm) | 78/75/51 (1m, ctr) | **YES — 47% throughput gain. SSH was at 97% CPU with gcm.** |
 
 ### HDD results (previous session, not individually recorded)
 
