@@ -317,12 +317,16 @@ sudo bash scripts/self-backup.sh --keep=3
 
 ### Restore
 
+1. Write a fresh Pi OS image to a new SD card and boot
+2. Mount the backup USB drive
+3. Restore:
 ```bash
-# From another machine, write the image to a new SD card
-gunzip -c /path/to/pullback-sd-2026-03-15.img.gz | dd of=/dev/sdX bs=4M status=progress
+rsync -aHAX /backup/.self-backup/rootfs/ /
+rsync -aHAX /backup/.self-backup/boot/ /boot/firmware/
+reboot
 ```
 
-Images are stored in `/backup/.self-backup/` and auto-pruned to the configured `keep` count.
+Uses filesystem rsync — only copies actual files (~4 GB), not empty space. First run takes seconds, subsequent runs are incremental (only changed files).
 
 ## USB Drive Management
 

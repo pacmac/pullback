@@ -1,9 +1,13 @@
 #!/bin/bash
-# self-backup.sh — Image the SD card to the backup volume.
-# Creates a compressed dd image of /dev/mmcblk0 for disaster recovery.
-# Restore: gunzip -c pullback-sd-YYYY-MM-DD.img.gz | dd of=/dev/mmcblk0 bs=4M
+# self-backup.sh — Back up the Pi root filesystem to the backup volume.
+# Uses rsync to copy actual files (not empty space). Fast and incremental.
 #
-# Usage: self-backup.sh [--keep=N]  (default: keep 2 images)
+# Restore: write fresh Pi OS to SD card, boot, then:
+#   rsync -aHAX /backup/.self-backup/rootfs/ /
+#   rsync -aHAX /backup/.self-backup/boot/ /boot/firmware/
+#   reboot
+#
+# Usage: self-backup.sh [--keep=N]  (default: keep latest only, no versioning)
 
 set -euo pipefail
 
@@ -11,13 +15,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CONFIG="${PROJECT_DIR}/config.yaml"
 TAG="self-backup"
-
-KEEP=2
-for arg in "$@"; do
-    case "$arg" in
-        --keep=*) KEEP="${arg#*=}" ;;
-    esac
-done
 
 log() { echo "[${TAG}] $*"; logger -t "$TAG" "$*"; }
 
@@ -36,70 +33,50 @@ if ! mountpoint -q "$MOUNT_POINT" 2>/dev/null; then
     exit 1
 fi
 
-# ── Check SD card exists ──
-
-SD_DEV="/dev/mmcblk0"
-if [[ ! -b "$SD_DEV" ]]; then
-    log "ERROR: SD card not found at ${SD_DEV}"
-    exit 1
-fi
-
 # ── Setup ──
 
 BACKUP_DIR="${MOUNT_POINT}/.self-backup"
-mkdir -p "$BACKUP_DIR"
+ROOTFS_DIR="${BACKUP_DIR}/rootfs"
+BOOT_DIR="${BACKUP_DIR}/boot"
+mkdir -p "$ROOTFS_DIR" "$BOOT_DIR"
 
-DATE=$(date +%Y-%m-%d)
-IMAGE="${BACKUP_DIR}/pullback-sd-${DATE}.img.gz"
+log "Starting self-backup"
 
-SD_SIZE=$(blockdev --getsize64 "$SD_DEV")
-SD_SIZE_GB=$((SD_SIZE / 1024 / 1024 / 1024))
-
-log "Starting SD card backup"
-log "  Source:  ${SD_DEV} (${SD_SIZE_GB} GB)"
-log "  Dest:    ${IMAGE}"
-
-# ── Check disk space ──
-
-FREE_BYTES=$(df --output=avail -B1 "$MOUNT_POINT" | tail -1)
-# Compressed image is typically 30-50% of SD size
-NEEDED=$((SD_SIZE / 3))
-if [[ $FREE_BYTES -lt $NEEDED ]]; then
-    FREE_GB=$((FREE_BYTES / 1024 / 1024 / 1024))
-    NEED_GB=$((NEEDED / 1024 / 1024 / 1024))
-    log "ERROR: not enough space. Need ~${NEED_GB} GB, have ${FREE_GB} GB free"
-    exit 1
-fi
-
-# ── Create image ──
+# ── Backup root filesystem ──
 
 START=$(date +%s)
-if command -v pigz &>/dev/null; then
-    dd if="$SD_DEV" bs=4M status=none | pigz -1 > "$IMAGE"
-else
-    dd if="$SD_DEV" bs=4M status=none | gzip -1 > "$IMAGE"
-fi
-ELAPSED=$(( $(date +%s) - START ))
 
-IMAGE_SIZE=$(stat -c%s "$IMAGE")
-IMAGE_SIZE_MB=$((IMAGE_SIZE / 1024 / 1024))
+rsync -aHAX --delete \
+    --exclude='/backup' \
+    --exclude='/proc' \
+    --exclude='/sys' \
+    --exclude='/dev' \
+    --exclude='/tmp' \
+    --exclude='/run' \
+    --exclude='/mnt' \
+    --exclude='/media' \
+    --exclude='/lost+found' \
+    --exclude='/var/cache/apt' \
+    --exclude='/var/tmp' \
+    --exclude='/swap*' \
+    / "$ROOTFS_DIR/"
 
-log "Backup complete: ${IMAGE_SIZE_MB} MB in ${ELAPSED}s"
+log "Root filesystem backed up"
 
-# ── Prune old images ──
+# ── Backup boot partition ──
 
-COUNT=$(ls -1 "${BACKUP_DIR}"/pullback-sd-*.img.gz 2>/dev/null | wc -l)
-if [[ $COUNT -gt $KEEP ]]; then
-    REMOVE=$((COUNT - KEEP))
-    ls -1t "${BACKUP_DIR}"/pullback-sd-*.img.gz | tail -${REMOVE} | while read -r old; do
-        log "Pruning old image: $(basename "$old")"
-        rm -f "$old"
-    done
-fi
+rsync -aHAX --delete /boot/firmware/ "$BOOT_DIR/"
+
+log "Boot partition backed up"
 
 # ── Summary ──
 
-log "Images in ${BACKUP_DIR}:"
-ls -lh "${BACKUP_DIR}"/pullback-sd-*.img.gz 2>/dev/null | while read -r line; do
-    log "  $line"
-done
+ELAPSED=$(( $(date +%s) - START ))
+ROOTFS_SIZE=$(du -sh "$ROOTFS_DIR" | awk '{print $1}')
+BOOT_SIZE=$(du -sh "$BOOT_DIR" | awk '{print $1}')
+
+log "Complete: rootfs=${ROOTFS_SIZE} boot=${BOOT_SIZE} in ${ELAPSED}s"
+
+# ── Timestamp ──
+
+date -Iseconds > "${BACKUP_DIR}/last-backup"
