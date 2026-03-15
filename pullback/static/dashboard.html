@@ -166,7 +166,9 @@ function renderSource(name, src) {
 
         html += '<div class="folder-item">';
         html += '<span>' + folderIcon(fdata) + ' ';
-        if (!isRunning && !isSyncing) {
+        if (isRunning || isSyncing) {
+            html += '<button class="btn btn-folder-run" disabled>Run</button> ';
+        } else {
             html += '<button class="btn btn-folder-run" onclick="runFolder(\'' + name + '\',\'' + fpath + '\')">Run</button> ';
         }
         html += fpath + '</span>';
