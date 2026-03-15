@@ -169,10 +169,11 @@ function renderSource(name, src) {
         html += '<span class="folder-meta">';
         if (isSyncing) {
             html += 'syncing...';
-        } else if (fstate) {
-            html += fmtTime(fstate.last_synced_at);
+        } else if (isRunning) {
+            html += fstate ? fmtTime(fstate.last_synced_at) : 'pending';
         } else {
-            html += 'pending';
+            html += '<button class="btn btn-folder-run" onclick="runFolder(\'' + name + '\',\'' + fpath + '\')">Run</button> ';
+            html += fstate ? fmtTime(fstate.last_synced_at) : 'pending';
         }
         html += '</span></div>';
     }
@@ -277,6 +278,12 @@ async function runAll() {
 async function runSource(name) {
     await fetch(API + '/api/run', { method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({source: name}) });
+    setTimeout(poll, 500);
+}
+
+async function runFolder(source, folder) {
+    await fetch(API + '/api/run', { method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({source: source, folder: folder}) });
     setTimeout(poll, 500);
 }
 
