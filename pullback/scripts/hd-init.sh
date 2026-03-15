@@ -2,7 +2,8 @@
 # hd-init.sh — Prepare a USB drive as a pullback backup volume.
 # Formats (with --format), mounts, and creates flag file.
 # Idempotent for mount, destructive format requires --format flag.
-# Run as root on the Pi.
+# Does NOT touch fstab. Mounts directly by device.
+# Run as root.
 
 set -euo pipefail
 
@@ -18,12 +19,12 @@ log() { echo "[${LOG_TAG}] $*"; }
 usage() {
     echo "Usage: $0 <device> [--format]"
     echo ""
-    echo "  <device>    Block device partition (e.g. /dev/sda1)"
+    echo "  <device>    Block device (e.g. /dev/sda or /dev/sda1)"
     echo "  --format    Format the device (DESTRUCTIVE — required on first run)"
     echo ""
     echo "Examples:"
-    echo "  $0 /dev/sda1 --format    # First time: format, mount, create flag"
-    echo "  $0 /dev/sda1             # Re-run: mount and verify flag only"
+    echo "  $0 /dev/sda --format     # First time: format, mount, create flag"
+    echo "  $0 /dev/sda              # Re-run: mount and verify flag only"
     exit 1
 }
 
@@ -108,25 +109,12 @@ else
 
     # ── Mount ──
 
-    log "--- Setting up mount ---"
+    log "--- Mounting ---"
     mkdir -p "$MOUNT_POINT"
-
-    UUID=$(blkid -s UUID -o value "$DEVICE")
-    if [[ -z "$UUID" ]]; then
-        echo "Error: cannot determine UUID for ${DEVICE}. Was it formatted?" >&2
+    mount -o noatime,commit=60 "$DEVICE" "$MOUNT_POINT" || {
+        echo "Error: failed to mount ${DEVICE} at ${MOUNT_POINT}. Was it formatted?" >&2
         exit 1
-    fi
-    log "Device UUID: ${UUID}"
-
-    # Add fstab entry if not present
-    if ! grep -q "UUID=${UUID}" /etc/fstab 2>/dev/null; then
-        echo "UUID=${UUID} ${MOUNT_POINT} ${FILESYSTEM} noatime,commit=60,nofail 0 2" >> /etc/fstab
-        log "Added fstab entry"
-    else
-        log "fstab entry already exists"
-    fi
-
-    mount "$MOUNT_POINT"
+    }
     log "Mounted ${DEVICE} at ${MOUNT_POINT}"
 
     # ── Create flag file on format ──

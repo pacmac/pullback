@@ -4,12 +4,11 @@
 # Logs to syslog via logger.
 #
 # 1. Already mounted? Skip.
-# 2. UUID in fstab? Mount, verify flag file.
-# 3. Not in fstab? Temp-mount, check for flag file:
-#    - Flag found: adopt the drive (add fstab entry, keep mounted)
+# 2. Try to mount the device, check for flag file:
+#    - Flag found: keep mounted.
 #    - No flag: unmount, refuse. Use hd-init.sh --format for new drives.
 #
-# NEVER auto-formats. Formatting destroys data and must be explicitly requested.
+# Does NOT touch fstab. Does NOT auto-format. Mounts directly by device.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -26,10 +25,8 @@ die() { log "ERROR: $*"; exit 1; }
 
 MOUNT_POINT=$(grep '^mount_point:' "$CONFIG" | awk '{print $2}')
 FLAG_FILE=$(grep '^\s*flag_file:' "$CONFIG" | awk '{print $2}')
-FILESYSTEM=$(grep '^\s*filesystem:' "$CONFIG" | awk '{print $2}')
 
 [[ -n "$MOUNT_POINT" && -n "$FLAG_FILE" ]] || die "could not read mount_point or flag_file from config"
-: "${FILESYSTEM:=ext4}"
 
 # ── Get device from udev environment ──
 
@@ -44,55 +41,18 @@ if mountpoint -q "$MOUNT_POINT" 2>/dev/null; then
     exit 0
 fi
 
-# ── Get UUID ──
+# ── Try to mount and check for flag file ──
 
-UUID=$(blkid -s UUID -o value "$DEVICE" 2>/dev/null || true)
-
-# ── Known drive: UUID in fstab ──
-
-if [[ -n "$UUID" ]] && grep -q "UUID=${UUID}" /etc/fstab 2>/dev/null; then
-    log "Known volume ${DEVICE} (UUID=${UUID}), mounting"
-    mkdir -p "$MOUNT_POINT"
-    systemctl daemon-reload
-    sleep 2
-    mount "$DEVICE" "$MOUNT_POINT" || die "failed to mount known volume ${DEVICE}"
-
-    if [[ ! -f "${MOUNT_POINT}/${FLAG_FILE}" ]]; then
-        log "WARNING: ${FLAG_FILE} missing on known volume, unmounting"
-        umount "$MOUNT_POINT" 2>/dev/null || true
-        exit 1
-    fi
-
-    log "Mounted pullback volume at ${MOUNT_POINT}"
-    exit 0
-fi
-
-# ── Unknown drive: temp-mount and check for flag file ──
-
-log "Unknown USB drive ${DEVICE} (UUID=${UUID:-none}) — checking for flag file"
+log "USB drive detected: ${DEVICE} — checking for flag file"
 
 mkdir -p "$MOUNT_POINT"
-if ! mount -o ro "$DEVICE" "$MOUNT_POINT" 2>/dev/null; then
+if ! mount -o noatime,commit=60 "$DEVICE" "$MOUNT_POINT" 2>/dev/null; then
     log "Cannot mount ${DEVICE} — not a valid filesystem, ignoring"
     exit 0
 fi
 
 if [[ -f "${MOUNT_POINT}/${FLAG_FILE}" ]]; then
-    # This is a pullback volume from a previous install — adopt it
-    umount "$MOUNT_POINT"
-    log "Flag file found — adopting ${DEVICE} (UUID=${UUID}) as pullback volume"
-
-    # Add fstab entry
-    if [[ -n "$UUID" ]] && ! grep -q "UUID=${UUID}" /etc/fstab 2>/dev/null; then
-        echo "UUID=${UUID} ${MOUNT_POINT} ${FILESYSTEM} noatime,commit=60,nofail 0 2" >> /etc/fstab
-        log "Added fstab entry for UUID=${UUID}"
-        systemctl daemon-reload
-    fi
-
-    # Remount read-write
-    sleep 1
-    mount "$DEVICE" "$MOUNT_POINT" || die "failed to remount ${DEVICE} read-write"
-    log "Mounted pullback volume at ${MOUNT_POINT}"
+    log "Mounted pullback volume ${DEVICE} at ${MOUNT_POINT}"
     exit 0
 fi
 
