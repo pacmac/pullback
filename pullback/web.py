@@ -32,13 +32,15 @@ def _get_backup_disk():
     """Find the block device name backing the backup mount point."""
     try:
         mount = _cfg["mount_point"]
-        with open("/proc/mounts") as f:
-            for line in f:
-                parts = line.split()
-                if len(parts) >= 2 and parts[1] == mount:
-                    dev = parts[0]  # e.g. /dev/sdb
-                    return os.path.basename(dev)  # e.g. sdb
-    except (OSError, KeyError):
+        result = subprocess.run(
+            ["df", mount], capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0:
+            lines = result.stdout.strip().split("\n")
+            if len(lines) >= 2:
+                dev = lines[1].split()[0]  # e.g. /dev/sdb
+                return os.path.basename(dev)  # e.g. sdb
+    except (OSError, KeyError, subprocess.TimeoutExpired):
         pass
     return None
 

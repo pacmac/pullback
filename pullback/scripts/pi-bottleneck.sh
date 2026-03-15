@@ -10,7 +10,7 @@ for arg in "$@"; do
 done
 
 # Detect backup disk device from /backup mount
-DISK_DEV=$(findmnt -n -o SOURCE /backup 2>/dev/null | xargs basename 2>/dev/null || echo "sda")
+DISK_DEV=$(df /backup 2>/dev/null | tail -1 | awk '{print $1}' | xargs basename 2>/dev/null || echo "sda")
 
 SAMPLES=0
 SUM_CPU=0
