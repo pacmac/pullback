@@ -21,13 +21,18 @@ def build_command(source_cfg, folder_cfg, rsync_args, mount_point, ssh_cfg=None)
     """Build the rsync command list.
 
     Returns (cmd_list, local_dest_path).
+
+    Transport modes:
+      - ssh (default): rsync over SSH, uses ssh_cfg for key/cipher
+      - rsync: rsync daemon mode, no encryption. Uses host::module/path syntax.
+               Requires 'rsync_module' in source_cfg.
     """
     host = source_cfg["host"]
     remote_root = source_cfg["remote_root"].rstrip("/")
     folder_path = folder_cfg["path"].strip("/")
     local_root = source_cfg["local_root"]
+    transport = source_cfg.get("transport", "ssh")
 
-    remote = f"{host}:{remote_root}/{folder_path}/"
     local = str(Path(mount_point) / local_root / folder_path) + "/"
 
     args = list(rsync_args)
@@ -36,17 +41,25 @@ def build_command(source_cfg, folder_cfg, rsync_args, mount_point, ssh_cfg=None)
     if folder_cfg.get("delete", False):
         args.append("--delete")
 
-    # Build ssh command from config if ssh key is specified
-    if ssh_cfg and ssh_cfg.get("key"):
-        key_path = ssh_cfg["key"]
-        # Resolve relative paths from project folder
-        if not os.path.isabs(key_path):
-            key_path = str(Path(__file__).parent / key_path)
-        ssh_cmd = f"ssh -i {key_path} -o StrictHostKeyChecking=accept-new"
-        cipher = ssh_cfg.get("cipher")
-        if cipher:
-            ssh_cmd += f" -c {cipher}"
-        args += ["-e", ssh_cmd]
+    if transport == "rsync":
+        # Rsync daemon mode — no SSH, no encryption
+        module = source_cfg.get("rsync_module", "")
+        if module:
+            remote = f"{host}::{module}/{folder_path}/"
+        else:
+            remote = f"{host}::{remote_root.strip('/')}/{folder_path}/"
+    else:
+        # SSH mode (default)
+        remote = f"{host}:{remote_root}/{folder_path}/"
+        if ssh_cfg and ssh_cfg.get("key"):
+            key_path = ssh_cfg["key"]
+            if not os.path.isabs(key_path):
+                key_path = str(Path(__file__).parent / key_path)
+            ssh_cmd = f"ssh -i {key_path} -o StrictHostKeyChecking=accept-new"
+            cipher = ssh_cfg.get("cipher")
+            if cipher:
+                ssh_cmd += f" -c {cipher}"
+            args += ["-e", ssh_cmd]
 
     cmd = ["rsync"] + args + [remote, local]
     return cmd, local
