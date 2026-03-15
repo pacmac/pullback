@@ -1,7 +1,8 @@
 #!/bin/bash
-# pi-setup.sh — Install pullback on Raspberry Pi with Pi-specific tuning.
-# Runs general setup first, then applies Pi 4 performance optimisations.
-# Run as root on the Pi.
+# pi-setup.sh — Install pullback on Raspberry Pi.
+# Runs general setup, then captures system defaults for tuning baseline.
+# Does NOT apply tuning — that must be done manually, one param at a time.
+# See docs/TUNING.md for the tuning procedure.
 #
 # Usage: pi-setup.sh [--dry-run]
 
@@ -30,7 +31,7 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-log "Installing pullback with Pi-specific tuning"
+log "Installing pullback on Pi"
 [[ "$DRY_RUN" == true ]] && log "*** DRY-RUN MODE — no changes will be made ***"
 
 # ── Pi prerequisites ──
@@ -48,32 +49,34 @@ fi
 
 log "--- Running general setup ---"
 if [[ "$DRY_RUN" == true ]]; then
-    run bash "${SCRIPT_DIR}/setup.sh" --dry-run
+    bash "${SCRIPT_DIR}/setup.sh" --dry-run
 else
     bash "${SCRIPT_DIR}/setup.sh"
 fi
 
-# ── Pi tuning ──
+# ── Capture defaults ──
 
-log "--- Pi performance tuning ---"
-run bash "${SCRIPT_DIR}/pi-tune-install.sh"
+log "--- Capturing system defaults ---"
+run bash "${SCRIPT_DIR}/pi-capture-defaults.sh"
 
 # ── Done ──
 
 echo ""
 log "============================================"
-log "Pi setup complete."
+log "Pi base setup complete."
 log "============================================"
 echo ""
-log "Pi-specific tuning applied:"
-log "  - Dirty page limits (sysctl)"
-log "  - RPS network softirq distribution"
-log "  - EEE disabled"
-log "  - CPU governor: performance"
-log "  - UAS check (reboot required if enabled)"
+log "Tuning has NOT been applied."
+log "System defaults have been captured to docs/TUNEDEFAULT.local.md"
+echo ""
+log "To apply tuning, follow the procedure in docs/TUNING.md:"
+log "  1. Review docs/TUNEDEFAULT.local.md (your baseline)"
+log "  2. Start a sync to get baseline throughput numbers"
+log "  3. Apply ONE parameter at a time, measure, keep or revert"
+log "  4. When satisfied, run pi-tune-install.sh to make changes permanent"
 echo ""
 
-# Check if a USB drive is connected but not initialised
+# Check if a USB drive is connected
 MOUNT_POINT=$(grep '^mount_point:' "${PROJECT_DIR}/config.yaml" 2>/dev/null | awk '{print $2}')
 : "${MOUNT_POINT:=/backup}"
 

@@ -6,6 +6,9 @@ pullback/venv/
 # Local config overrides (may contain credentials)
 pullback/config.local.yaml
 
+# Host-specific captured defaults
+pullback/docs/TUNEDEFAULT.local.md
+
 # Runtime state
 pullback/state/progress/
 pullback/state/cancel/
