@@ -1,0 +1,10 @@
+[Unit]
+Description=pullback USB backup drive mount (%i)
+After=dev-%i.device
+Requires=dev-%i.device
+
+[Service]
+Type=oneshot
+ExecStart=/usr/share/pac/dev/pullback/pullback/scripts/udev-mount.sh %i
+Environment=DEVNAME=/dev/%i
+RemainAfterExit=no

@@ -1,0 +1,220 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, 'Segoe UI', Roboto, monospace;
+    background: #0d1117;
+    color: #c9d1d9;
+    padding: 20px;
+    max-width: 1000px;
+    margin: 0 auto;
+    font-size: 15px;
+}
+
+h1 { color: #58a6ff; margin-bottom: 4px; font-size: 1.4em; }
+h1 a { color: #58a6ff; text-decoration: none; }
+h2 { color: #8b949e; margin: 20px 0 10px; font-size: 1.1em; }
+
+.subtitle { color: #8b949e; font-size: 0.9em; margin-bottom: 20px; }
+
+/* Cards */
+.card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.card-title { font-size: 1.05em; color: #f0f6fc; }
+
+/* Status colors */
+.status-ok { color: #3fb950; }
+.status-fail { color: #f85149; }
+.status-running { color: #d29922; }
+.status-idle { color: #8b949e; }
+
+/* System stats bar */
+.sys-stats {
+    display: flex;
+    gap: 24px;
+    font-size: 0.95em;
+    flex-wrap: wrap;
+}
+
+.sys-stats .stat-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.sys-stats .stat-label { color: #8b949e; }
+.sys-stats .stat-value { color: #f0f6fc; font-weight: bold; }
+
+/* Progress bar */
+.progress-outer {
+    background: #21262d;
+    border-radius: 6px;
+    height: 22px;
+    width: 100%;
+    position: relative;
+    overflow: hidden;
+    margin: 8px 0;
+}
+
+.progress-inner {
+    height: 100%;
+    border-radius: 6px;
+    background: linear-gradient(90deg, #238636, #3fb950);
+    transition: width 0.5s ease;
+    min-width: 0;
+}
+
+.progress-text {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85em;
+    font-weight: 600;
+    color: #f0f6fc;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+
+/* Progress details */
+.progress-details {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.9em;
+    color: #8b949e;
+    margin-top: 4px;
+}
+
+.progress-file {
+    margin-top: 6px;
+    font-size: 0.9em;
+    color: #c9d1d9;
+    font-family: monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Folder list */
+.folder-list {
+    margin-top: 12px;
+    font-size: 0.95em;
+}
+
+.folder-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid #21262d;
+}
+
+.folder-item:last-child { border-bottom: none; }
+
+.folder-icon { margin-right: 8px; }
+.folder-icon.ok { color: #3fb950; }
+.folder-icon.fail { color: #f85149; }
+.folder-icon.running { color: #d29922; }
+.folder-icon.pending { color: #8b949e; }
+
+.folder-meta {
+    font-size: 0.9em;
+    color: #8b949e;
+}
+
+/* Buttons */
+.btn {
+    background: #21262d;
+    color: #c9d1d9;
+    border: 1px solid #30363d;
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9em;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.btn:hover { background: #30363d; }
+.btn-run { background: #238636; border-color: #2ea043; color: #fff; }
+.btn-run:hover { background: #2ea043; }
+.btn-cancel { background: #da3633; border-color: #f85149; color: #fff; }
+.btn-cancel:hover { background: #f85149; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-group { display: flex; gap: 8px; }
+
+/* Disk usage bar */
+.disk-bar {
+    background: #21262d;
+    border-radius: 4px;
+    height: 10px;
+    width: 100%;
+    margin-top: 6px;
+}
+
+.disk-fill {
+    height: 10px;
+    border-radius: 4px;
+    transition: width 0.3s;
+}
+
+.disk-fill.ok { background: #3fb950; }
+.disk-fill.warn { background: #d29922; }
+.disk-fill.danger { background: #f85149; }
+
+/* Log viewer */
+.log-viewer {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 12px;
+    font-family: monospace;
+    font-size: 0.85em;
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #8b949e;
+    line-height: 1.5;
+}
+
+/* Header bar */
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.header-right { display: flex; align-items: center; gap: 12px; }
+
+.poll-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #3fb950;
+    display: inline-block;
+}
+
+.poll-indicator.active {
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}

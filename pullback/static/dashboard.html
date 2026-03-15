@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pullBack</title>
+<link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+
+<div class="header">
+    <div>
+        <h1><a href="/">pullBack</a></h1>
+        <div class="subtitle">rsync backup system</div>
+    </div>
+    <div class="header-right">
+        <span class="poll-indicator" id="poll-dot"></span>
+        <button class="btn btn-run" onclick="runAll()">Run All</button>
+    </div>
+</div>
+
+<!-- System stats -->
+<div class="card" id="system-card">
+    <div class="card-header">
+        <span class="card-title">System</span>
+        <span id="volume-info" class="folder-meta"></span>
+    </div>
+    <div class="sys-stats">
+        <div class="stat-item">
+            <span class="stat-label">CPU</span>
+            <span class="stat-value" id="sys-cpu">--</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Disk</span>
+            <span class="stat-value" id="sys-disk">--</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Net</span>
+            <span class="stat-value" id="sys-net">--</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">Dirty</span>
+            <span class="stat-value" id="sys-dirty">--</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">RX Drop</span>
+            <span class="stat-value" id="sys-rxdrop">--</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">IRQ Bal</span>
+            <span class="stat-value" id="sys-irqbal">--</span>
+        </div>
+    </div>
+    <div id="sys-warnings" style="margin-top:8px"></div>
+    <div class="disk-bar" style="margin-top:12px">
+        <div class="disk-fill ok" id="disk-bar" style="width:0%"></div>
+    </div>
+    <div style="margin-top:4px;font-size:0.9em;color:#8b949e" id="disk-text"></div>
+</div>
+
+<!-- Sources (populated by JS) -->
+<div id="sources"></div>
+
+<!-- Log -->
+<h2>Log</h2>
+<div class="card">
+    <div class="log-viewer" id="log-viewer">Loading...</div>
+</div>
+
+<script>
+const API = '';
+
+function fmtBytes(n) {
+    if (!n) return '--';
+    if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+    if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+    return n + ' B';
+}
+
+function fmtDuration(s) {
+    if (!s && s !== 0) return '--';
+    s = Math.round(s);
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+    return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+}
+
+function fmtTime(iso) {
+    if (!iso) return 'never';
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = Math.floor((now - d) / 1000);
+    if (diff < 60) return diff + 's ago';
+    if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+}
+
+function folderIcon(folder) {
+    if (!folder) return '<span class="folder-icon pending">&#9675;</span>';
+    if (folder._syncing) return '<span class="folder-icon running">&#9679;</span>';
+    if (folder.success) return '<span class="folder-icon ok">&#10003;</span>';
+    return '<span class="folder-icon fail">&#10007;</span>';
+}
+
+function renderSource(name, src) {
+    const state = src.state || {};
+    const progress = src.progress || {};
+    const folders = src.folders || [];
+    const isRunning = progress && progress.source;
+
+    let statusClass = 'status-idle';
+    let statusText = 'IDLE';
+    if (isRunning) { statusClass = 'status-running'; statusText = 'RUNNING'; }
+    else if (state.last_run_success === true) { statusClass = 'status-ok'; statusText = 'OK'; }
+    else if (state.last_run_success === false) { statusClass = 'status-fail'; statusText = 'FAILED'; }
+
+    let html = '<div class="card" id="source-' + name + '">';
+    html += '<div class="card-header">';
+    html += '<span class="card-title">' + name + ' <span style="color:#8b949e;font-size:0.85em">(' + (src.host || '') + ')</span></span>';
+    html += '<div class="btn-group">';
+    html += '<span class="' + statusClass + '" style="margin-right:8px;font-weight:bold">' + statusText + '</span>';
+    if (isRunning) {
+        html += '<button class="btn btn-cancel" onclick="cancelSource(\'' + name + '\')">Cancel</button>';
+    } else {
+        html += '<button class="btn btn-run" onclick="runSource(\'' + name + '\')">Run</button>';
+    }
+    html += '</div></div>';
+
+    // Progress bar (if running)
+    if (isRunning) {
+        const pct = progress.overall_pct || 0;
+        html += '<div class="progress-outer"><div class="progress-inner" style="width:' + pct + '%"></div>';
+        html += '<div class="progress-text">' + pct + '%</div></div>';
+        html += '<div class="progress-details">';
+        html += '<span>' + (progress.speed || '--') + '</span>';
+        html += '<span>' + fmtBytes(progress.bytes_transferred) + '</span>';
+        html += '<span>ETA ' + (progress.eta || '--') + '</span>';
+        html += '<span>' + fmtDuration(progress.elapsed) + ' elapsed</span>';
+        html += '</div>';
+        html += '<div class="progress-file">' + (progress.current_file || '') + '</div>';
+    }
+
+    // Last sync info
+    if (!isRunning && state.last_run_started_at) {
+        html += '<div style="font-size:0.9em;color:#8b949e;margin-top:8px">';
+        html += 'Last: ' + fmtTime(state.last_success_at || state.last_run_started_at);
+        html += ' &middot; ' + fmtDuration(state.last_sync_duration);
+        if (state.last_error) html += ' &middot; <span class="status-fail">' + state.last_error + '</span>';
+        html += '</div>';
+    }
+
+    // Folder list
+    html += '<div class="folder-list">';
+    for (const f of folders) {
+        const fpath = f.path;
+        const fstate = (state.folders || {})[fpath];
+        const stepPath = (progress.step || '').replace('syncing ', '');
+        const isSyncing = isRunning && progress.step && (
+            progress.step.includes(fpath) || fpath.startsWith(stepPath + '/') || fpath === stepPath
+        );
+
+        let fdata = fstate ? {...fstate} : null;
+        if (isSyncing && fdata) fdata._syncing = true;
+        else if (isSyncing) fdata = {_syncing: true};
+
+        html += '<div class="folder-item">';
+        html += '<span>' + folderIcon(fdata) + ' ' + fpath + '</span>';
+        html += '<span class="folder-meta">';
+        if (isSyncing) {
+            html += 'syncing...';
+        } else if (fstate) {
+            html += fmtTime(fstate.last_synced_at);
+        } else {
+            html += 'pending';
+        }
+        html += '</span></div>';
+    }
+    html += '</div>';
+    html += '</div>';
+    return html;
+}
+
+async function poll() {
+    const dot = document.getElementById('poll-dot');
+    dot.classList.add('active');
+    try {
+        const res = await fetch(API + '/api/status');
+        const data = await res.json();
+
+        // System stats
+        const sys = data.system || {};
+        document.getElementById('sys-cpu').textContent = (sys.cpu_pct || 0) + '%';
+        document.getElementById('sys-disk').textContent = (sys.disk_mb_s || 0) + ' MB/s';
+        document.getElementById('sys-net').textContent = (sys.net_mb_s || 0) + ' MB/s';
+
+        // Health stats
+        const dirtyMb = sys.dirty_mb || 0;
+        const rxDrop = sys.rx_dropped || 0;
+        const irqCpu0 = sys.softirq_cpu0_pct || 0;
+
+        const dirtyEl = document.getElementById('sys-dirty');
+        dirtyEl.textContent = dirtyMb + ' MB';
+        dirtyEl.style.color = dirtyMb > 200 ? '#f85149' : dirtyMb > 100 ? '#d29922' : '#f0f6fc';
+
+        const rxEl = document.getElementById('sys-rxdrop');
+        rxEl.textContent = rxDrop;
+        rxEl.style.color = rxDrop > 1000 ? '#f85149' : rxDrop > 100 ? '#d29922' : '#f0f6fc';
+
+        const irqEl = document.getElementById('sys-irqbal');
+        irqEl.textContent = (100 - irqCpu0) + '%';
+        irqEl.style.color = irqCpu0 > 90 ? '#f85149' : irqCpu0 > 70 ? '#d29922' : '#f0f6fc';
+
+        // Warnings
+        let warnings = [];
+        if (dirtyMb > 200) warnings.push('Dirty pages high (' + dirtyMb + ' MB) — disk flush backlog');
+        if (irqCpu0 > 90) warnings.push('Network IRQs unbalanced (' + irqCpu0 + '% on CPU0) — enable RPS');
+        if (rxDrop > 1000) warnings.push('RX packets dropped (' + rxDrop + ') — possible EEE or buffer issue');
+        const warnEl = document.getElementById('sys-warnings');
+        if (warnings.length) {
+            warnEl.innerHTML = warnings.map(w => '<div style="color:#f85149;font-size:0.9em">&#9888; ' + w + '</div>').join('');
+        } else {
+            warnEl.innerHTML = '';
+        }
+
+        if (sys.volume_mounted) {
+            const usedPct = sys.volume_total_gb > 0
+                ? Math.round((sys.volume_total_gb - sys.volume_free_gb) / sys.volume_total_gb * 100) : 0;
+            const bar = document.getElementById('disk-bar');
+            bar.style.width = usedPct + '%';
+            bar.className = 'disk-fill ' + (usedPct > 90 ? 'danger' : usedPct > 70 ? 'warn' : 'ok');
+            document.getElementById('disk-text').textContent =
+                sys.volume_free_gb + ' GB free / ' + sys.volume_total_gb + ' GB (' + (100-usedPct) + '%)';
+            document.getElementById('volume-info').textContent = '/backup mounted';
+        } else {
+            document.getElementById('disk-text').textContent = 'No volume mounted';
+            document.getElementById('volume-info').textContent = 'NOT MOUNTED';
+            document.getElementById('volume-info').style.color = '#f85149';
+        }
+
+        // Sources
+        const container = document.getElementById('sources');
+        let sourcesHtml = '';
+        let anyRunning = false;
+        for (const [name, src] of Object.entries(data.sources || {})) {
+            sourcesHtml += renderSource(name, src);
+            if (src.progress && src.progress.source) anyRunning = true;
+        }
+        container.innerHTML = sourcesHtml;
+
+        // Adjust poll interval
+        pollInterval = anyRunning ? 2000 : 10000;
+
+    } catch(e) {
+        console.error('Poll failed:', e);
+    }
+    setTimeout(() => dot.classList.remove('active'), 500);
+    setTimeout(poll, pollInterval);
+}
+
+async function pollLog() {
+    try {
+        const res = await fetch(API + '/api/log?lines=30');
+        const data = await res.json();
+        const el = document.getElementById('log-viewer');
+        el.textContent = (data.lines || []).join('\n');
+        el.scrollTop = el.scrollHeight;
+    } catch(e) {}
+    setTimeout(pollLog, 5000);
+}
+
+async function runAll() {
+    await fetch(API + '/api/run', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+    setTimeout(poll, 500);
+}
+
+async function runSource(name) {
+    await fetch(API + '/api/run', { method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({source: name}) });
+    setTimeout(poll, 500);
+}
+
+async function cancelSource(name) {
+    await fetch(API + '/api/cancel', { method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({source: name}) });
+    setTimeout(poll, 500);
+}
+
+let pollInterval = 2000;
+poll();
+pollLog();
+</script>
+</body></html>

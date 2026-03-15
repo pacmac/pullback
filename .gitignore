@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+pullback/venv/
+
+# Local config overrides (may contain credentials)
+pullback/config.local.yaml
+
+# Runtime state
+pullback/state/progress/
+pullback/state/cancel/
+
+# SSH keys
+pullback/keys/
+
+# Logs
+*.log
+
+# Playwright MCP
+.playwright-mcp/

@@ -1,0 +1,73 @@
+mount_point: /backup
+web_port: 8080
+web_host: 0.0.0.0
+
+ransomware:
+  enabled: false
+  sample_size: 30
+  change_threshold: 0.30
+  fprint_depth: 3
+
+rsync:
+  args:
+    - --archive
+    - --numeric-ids
+    - --partial
+    - --info=progress2,name1
+
+ssh:
+  key: keys/id_ed25519
+  cipher: aes128-gcm@openssh.com
+
+logging:
+  file: /var/log/pullback.log
+
+email:
+  enabled: true
+  # SMTP credentials go in config.local.yaml (not committed to git)
+  # See config.local.yaml.example
+  on_failure: true
+  on_success: false
+  on_warning: true
+  on_start: true
+
+tuning:
+  dirty_ratio: 5
+  dirty_background_ratio: 2
+  dirty_expire_centisecs: 1000
+  dirty_writeback_centisecs: 500
+  rps_enabled: true
+  eee_off: true
+  cpu_governor: performance
+
+usb:
+  flag_file: .pullback-volume
+  filesystem: ext4
+  reserved_pct: 1
+  uas: true
+
+sources:
+  pve:
+    host: proxmox.home
+    remote_root: /ssd8704t/
+    folders:
+      - path: shares/pac
+        retention:
+          retain_stamp: "retain_test.txt.$?"
+          extn_set: []
+          keep: 2
+
+      - path: shares/multimedia
+
+      # - path: shares/backups
+      - path: shares/prox-backups/dump
+        retention:
+          pattern: "vzdump-*"
+          extn_set: [.vma.zst, .log, .notes]
+          keep: 3
+
+      - path: shares/prox-backups/ellis/dump
+        retention:
+          pattern: "vzdump-*"
+          extn_set: [.vma.zst, .log, .notes]
+          keep: 3

@@ -1,0 +1,12 @@
+# Local config overrides — NOT committed to git.
+# Copy this file to config.local.yaml and fill in your details.
+# Values here override config.yaml.
+
+email:
+  smtp_host: your-smtp-host
+  smtp_port: 587
+  smtp_tls: true
+  smtp_user: your-user
+  smtp_pass: your-password
+  from: pullback@yourdomain
+  to: alerts@yourdomain

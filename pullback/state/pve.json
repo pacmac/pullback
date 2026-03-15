@@ -1,0 +1,56 @@
+{
+  "last_run_started_at": "2026-03-15T03:23:44.180158+00:00",
+  "last_run_success": false,
+  "last_success_at": "2026-03-14T07:18:45.993758+00:00",
+  "last_error": "one or more folders failed",
+  "last_files_total": 0,
+  "last_sync_bytes": 0,
+  "last_sync_duration": 170.6,
+  "folders": {
+    "shares/dis": {
+      "last_synced_at": "2026-03-14T04:22:28.094409+00:00",
+      "success": true,
+      "error": null
+    },
+    "shares/pac": {
+      "last_synced_at": "2026-03-15T03:23:45.081982+00:00",
+      "success": true,
+      "error": null
+    },
+    "shares/backups/2024": {
+      "last_synced_at": "2026-03-14T04:28:23.355591+00:00",
+      "success": true,
+      "error": null
+    },
+    "shares/backups": {
+      "last_synced_at": "2026-03-14T04:49:35.161251+00:00",
+      "success": true,
+      "error": null
+    },
+    "shares/data": {
+      "last_synced_at": "2026-03-14T04:52:28.862577+00:00",
+      "success": true,
+      "error": null
+    },
+    "shares/prox-backups": {
+      "last_synced_at": "2026-03-14T06:59:19.343303+00:00",
+      "success": true,
+      "error": null
+    },
+    "shares/prox-backups/dump": {
+      "last_synced_at": "2026-03-14T07:18:45.807823+00:00",
+      "success": true,
+      "error": null
+    },
+    "shares/prox-backups/ellis/dump": {
+      "last_synced_at": "2026-03-14T07:18:45.993356+00:00",
+      "success": true,
+      "error": null
+    },
+    "shares/multimedia": {
+      "last_synced_at": "2026-03-15T03:26:34.803685+00:00",
+      "success": false,
+      "error": "cancelled by user"
+    }
+  }
+}

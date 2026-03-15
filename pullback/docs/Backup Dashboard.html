@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backup Dashboard</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    font-family: -apple-system, 'Segoe UI', Roboto, monospace;
+    background: #0d1117;
+    color: #c9d1d9;
+    padding: 20px;
+    max-width: 960px;
+    margin: 0 auto;
+}
+h1 { color: #58a6ff; margin-bottom: 8px; font-size: 1.4em; }
+h2 { color: #8b949e; margin: 24px 0 12px; font-size: 1.1em; }
+.subtitle { color: #8b949e; font-size: 0.85em; margin-bottom: 20px; }
+.card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 12px;
+}
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+.card-title { font-size: 1.05em; color: #f0f6fc; }
+.status-ok { color: #3fb950; }
+.status-fail { color: #f85149; }
+.status-running { color: #d29922; }
+.status-never { color: #8b949e; }
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+}
+.stat { padding: 12px; }
+.stat-value { font-size: 1.5em; font-weight: bold; color: #f0f6fc; }
+.stat-label { font-size: 0.8em; color: #8b949e; margin-top: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+th {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid #30363d;
+    color: #8b949e;
+    font-weight: normal;
+}
+td { padding: 8px 12px; border-bottom: 1px solid #21262d; }
+tr:hover { background: #1c2128; }
+.bar-bg {
+    background: #21262d;
+    border-radius: 4px;
+    height: 8px;
+    width: 100%;
+    margin-top: 6px;
+}
+.bar-fill {
+    height: 8px;
+    border-radius: 4px;
+    transition: width 0.3s;
+}
+.bar-ok { background: #3fb950; }
+.bar-warn { background: #d29922; }
+.bar-danger { background: #f85149; }
+.btn {
+    background: #21262d;
+    color: #c9d1d9;
+    border: 1px solid #30363d;
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85em;
+    text-decoration: none;
+    display: inline-block;
+}
+.btn:hover { background: #30363d; }
+.btn-primary { background: #238636; border-color: #2ea043; color: #fff; }
+.btn-primary:hover { background: #2ea043; }
+.btn-danger { background: #da3633; border-color: #f85149; color: #fff; }
+.btn-danger:hover { background: #f85149; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+a { color: #58a6ff; text-decoration: none; }
+a:hover { text-decoration: underline; }
+.tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75em;
+    font-weight: 500;
+}
+.tag-latest { background: #1f3d2a; color: #3fb950; }
+.mono { font-family: monospace; font-size: 0.85em; }
+.refresh { float: right; font-size: 0.8em; color: #8b949e; }
+.progress-box {
+    display: none;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    margin-top: 12px;
+    padding: 16px;
+}
+.progress-title {
+    font-size: 0.8em;
+    color: #d29922;
+    margin-bottom: 10px;
+    font-weight: 500;
+}
+.progress-bar-outer {
+    background: #21262d;
+    border-radius: 6px;
+    height: 20px;
+    width: 100%;
+    position: relative;
+    overflow: hidden;
+}
+.progress-bar-inner {
+    height: 100%;
+    border-radius: 6px;
+    background: linear-gradient(90deg, #238636, #3fb950);
+    transition: width 0.5s ease;
+    min-width: 0;
+}
+.progress-bar-text {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75em;
+    font-weight: 600;
+    color: #f0f6fc;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+}
+.progress-details {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 10px;
+    font-size: 0.8em;
+    color: #8b949e;
+}
+.progress-file {
+    margin-top: 8px;
+    font-size: 0.8em;
+    color: #c9d1d9;
+    font-family: monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+</style>
+<script>
+function _fmtBytes(n) {
+    if (!n) return '—';
+    if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+    if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
+    return n + ' B';
+}
+
+function _progressHtml(name) {
+    return '<div id="progress-' + name + '" class="progress-box" style="display:block">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center">'
+        + '<div class="progress-title">Backup in progress</div>'
+        + '<button class="btn btn-danger" onclick="cancelJob(\'' + name + '\')">Cancel</button>'
+        + '</div>'
+        + '<div class="progress-step" style="font-size:0.8em;color:#d29922;margin-bottom:8px">Starting...</div>'
+        + '<div class="progress-bar-outer">'
+        + '<div class="progress-bar-inner" style="width:0%"></div>'
+        + '<div class="progress-bar-text">0%</div>'
+        + '</div>'
+        + '<div class="progress-file" style="margin-top:8px">Connecting...</div>'
+        + '<div class="progress-details">'
+        + '<span class="progress-speed">—</span>'
+        + '<span class="progress-transferred">—</span>'
+        + '<span class="progress-eta">0m 0s elapsed</span>'
+        + '</div></div>';
+}
+
+async function cancelJob(name) {
+    if (!confirm('Cancel backup job "' + name + '"?')) return;
+    try {
+        const res = await fetch('/api/cancel/' + name, { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'cancelled') {
+            const el = document.getElementById('progress-' + name);
+            if (el) {
+                const step = el.querySelector('.progress-step');
+                if (step) step.textContent = 'Cancelling...';
+            }
+        }
+    } catch(e) {}
+}
+
+async function runJob(name) {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = 'Running...';
+    try {
+        const res = await fetch('/api/run/' + name, { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'started') {
+            const statusEl = btn.parentElement.querySelector('.status-ok, .status-fail, .status-never');
+            if (statusEl) {
+                statusEl.className = 'status-running';
+                statusEl.textContent = 'RUNNING';
+            }
+            const card = btn.closest('.card');
+            if (card && !document.getElementById('progress-' + name)) {
+                card.insertAdjacentHTML('beforeend', _progressHtml(name));
+            }
+            btn.outerHTML = '<button class="btn btn-danger" onclick="cancelJob(\'' + name + '\')">Cancel</button>';
+            startProgress(name);
+        } else {
+            btn.textContent = 'Error';
+        }
+    } catch(e) {
+        btn.textContent = 'Error';
+    }
+}
+
+let _progressIntervals = {};
+function startProgress(name) {
+    const el = document.getElementById('progress-' + name);
+    if (!el) return;
+    el.style.display = 'block';
+    if (_progressIntervals[name]) clearInterval(_progressIntervals[name]);
+    _progressIntervals[name] = setInterval(async () => {
+        try {
+            const res = await fetch('/api/progress/' + name);
+            const d = await res.json();
+            if (!d.running) {
+                clearInterval(_progressIntervals[name]);
+                const bar = el.querySelector('.progress-bar-inner');
+                const barText = el.querySelector('.progress-bar-text');
+                const step = el.querySelector('.progress-step');
+                if (bar) bar.style.width = '100%';
+                if (barText) barText.textContent = 'Complete';
+                if (step) step.textContent = 'Done';
+                setTimeout(() => location.reload(), 2000);
+                return;
+            }
+            const bar = el.querySelector('.progress-bar-inner');
+            const barText = el.querySelector('.progress-bar-text');
+            const stepEl = el.querySelector('.progress-step');
+            const fileEl = el.querySelector('.progress-file');
+            const speedEl = el.querySelector('.progress-speed');
+            const transferredEl = el.querySelector('.progress-transferred');
+            const etaEl = el.querySelector('.progress-eta');
+            if (d.step) stepEl.textContent = d.step;
+            if (d.overall_pct !== undefined) {
+                bar.style.width = d.overall_pct + '%';
+                barText.textContent = d.overall_pct + '%';
+            }
+            if (d.current_file) fileEl.textContent = d.current_file;
+            if (d.speed) speedEl.textContent = d.speed;
+            if (d.bytes_transferred)
+                transferredEl.textContent = _fmtBytes(d.bytes_transferred);
+            if (d.elapsed !== undefined) {
+                const m = Math.floor(d.elapsed / 60);
+                const s = d.elapsed % 60;
+                let timeText = m + 'm ' + s + 's elapsed';
+                if (d.eta) timeText += ' — ETA ' + d.eta;
+                etaEl.textContent = timeText;
+            }
+        } catch(e) {}
+    }, 2000);
+}
+</script>
+</head><body>
+<h1><a href="/" style="color:#58a6ff;text-decoration:none">&#x1f4be; Backup Dashboard</a></h1>
+<div class="subtitle">piback &middot; rsync snapshot backup system</div>
+<div class="card"><div class="card-header"><span class="card-title">Disk Usage — /backup</span><span class="mono">44.7 / 56.5 GB</span></div><div class="bar-bg"><div class="bar-fill bar-warn" style="width:79.0%"></div></div><div style="margin-top:6px;font-size:0.8em;color:#8b949e">9.5 GB free (21%)</div></div><h2>Jobs</h2><div class="card"><div class="card-header"><span class="card-title"><a href="/job/pve">pve</a></span><span><span class="status-ok" style="margin-right:12px">OK</span><button class="btn btn-primary" onclick="runJob('pve')">Run Now</button></span></div><div style="font-size:0.8em;color:#8b949e;margin-bottom:10px"><span class="mono">root@proxmox.home:/ssd8704t/shares/dis/</span> &rarr; <span class="mono">/backup/pve</span></div><div class="grid"><div class="stat"><div class="stat-value">5</div><div class="stat-label">Snapshots</div></div><div class="stat"><div class="stat-value">28s ago</div><div class="stat-label">Last Success</div></div><div class="stat"><div class="stat-value">—</div><div class="stat-label">Files Synced</div></div><div class="stat"><div class="stat-value">—</div><div class="stat-label">Last Sync Size</div></div><div class="stat"><div class="stat-value">0</div><div class="stat-label">Files Pruned</div></div><div class="stat"><div class="stat-value">0.3s</div><div class="stat-label">Sync Duration</div></div></div></div>
+</body></html>
