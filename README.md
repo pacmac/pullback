@@ -2,6 +2,10 @@
 
 A dedicated rsync pull-backup appliance. Pulls incremental backups over SSH or rsync daemon from remote servers to USB drives. Built for Raspberry Pi but runs on any Linux box.
 
+<p align="center">
+  <img src="pullback/docs/pullback_ss1.png" alt="pullBack Dashboard" width="600">
+</p>
+
 ## Why another backup solution?
 
 Most backup tools push data from the source to the backup. pullBack does the opposite — it **pulls** from remote servers. This means:
