@@ -209,7 +209,7 @@ EOF
 
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
-systemctl start "$SERVICE_NAME"
+systemctl restart "$SERVICE_NAME"
 echo "Installed: ${SERVICE_DST}"
 
 # ── Summary ──
