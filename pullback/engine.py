@@ -251,6 +251,13 @@ def run_all(cfg, source_filter=None, folder_filter=None):
             pass
         return False
 
+    # Apply drive-specific tuning
+    try:
+        from tuning import apply_tuning
+        apply_tuning(cfg["mount_point"], cfg)
+    except ImportError:
+        pass
+
     # Check disk space
     mount = cfg["mount_point"]
     disk_warn_pct = cfg.get("disk_warn_pct", 90)

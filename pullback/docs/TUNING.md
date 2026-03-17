@@ -434,6 +434,53 @@ All values are read by `pi-tune-install.sh` and written to:
 - `/etc/sysctl.d/99-pullback.conf` — dirty page settings (persist via sysctl)
 - `scripts/pi-tune-boot.sh` — RPS, EEE, governor, BDI limits (run on boot via systemd)
 
+## Per-Drive Tuning
+
+Different drives need different tuning. A slow HDD needs BDI `max_bytes=80MB`
+to prevent dirty page stalls. A fast SSD doesn't need BDI at all. The tuning
+should follow the drive, not the system config.
+
+### How it works
+
+A `.pullback-tune.yaml` file on the backup volume (alongside `.pullback-volume`)
+provides drive-specific tuning overrides. At sync start, `tuning.py` reads it
+and merges with `config.yaml` defaults — drive values win.
+
+### File format
+
+Same `tuning:` section as `config.yaml`. Only include keys you want to override:
+
+**HDD example** (`/backup/.pullback-tune.yaml`):
+```yaml
+tuning:
+  bdi_max_bytes: 83886080  # 80 MB — essential for slow HDD
+```
+
+**SSD example** (no file needed — defaults are fine, or explicitly):
+```yaml
+tuning:
+  bdi_max_bytes: 0  # no BDI cap needed
+```
+
+**Supported keys:** `dirty_ratio`, `dirty_background_ratio`,
+`dirty_expire_centisecs`, `dirty_writeback_centisecs`, `bdi_max_bytes`,
+`rps_enabled`, `eee_off`, `cpu_governor`.
+
+### Override order
+
+1. `config.yaml` — system defaults
+2. `config.local.yaml` — host-specific overrides (merged at load)
+3. `.pullback-tune.yaml` — drive-specific overrides (merged at sync start)
+
+Drive config wins over everything for tuning settings.
+
+### Creating a drive tune file
+
+Use `pi-tune-status.sh --save=/backup/.pullback-tune.yaml` to snapshot the
+current live settings onto the drive.
+
+---
+
 ## UAS (USB Attached SCSI)
 
 UAS is a faster USB storage protocol that supports command queuing. It can
