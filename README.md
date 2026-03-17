@@ -155,6 +155,7 @@ tuning:
   dirty_background_ratio: 2
   dirty_expire_centisecs: 1000
   dirty_writeback_centisecs: 500
+  bdi_max_bytes: 83886080    # Per-device dirty page cap (80 MB). 0 to disable.
   rps_enabled: true
   eee_off: true
   cpu_governor: performance
@@ -246,6 +247,43 @@ pullBack includes extensive tuning for sustained rsync transfers, particularly o
 | + aes128-ctr cipher | 78 MB/s | +44% |
 | + rsync daemon | **121 MB/s** | +55% |
 | **Total** | **121 MB/s** | **3.5x baseline** |
+
+### Tuning parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `dirty_ratio` | 5 | % of RAM for dirty page hard limit |
+| `dirty_background_ratio` | 2 | % of RAM to trigger background writeback |
+| `dirty_expire_centisecs` | 1000 | Age (cs) before dirty pages must be written |
+| `dirty_writeback_centisecs` | 500 | Flusher thread wakeup interval (cs) |
+| `bdi_max_bytes` | 83886080 | Per-device dirty page cap in bytes (BDI). 0 to disable |
+| `rps_enabled` | true | Distribute network softirqs across CPUs (Pi) |
+| `eee_off` | true | Disable Energy Efficient Ethernet (Pi bcmgenet bug) |
+| `cpu_governor` | performance | CPU frequency governor |
+
+**`bdi_max_bytes`** is the most impactful setting for USB drives. It uses the kernel's per-device BDI (Backing Device Info) `strict_limit` to cap dirty pages for the backup drive only, without throttling other devices. Without it, dirty pages accumulate and cause write stalls. Tested: **3x throughput improvement** on USB HDD.
+
+### Per-drive tuning
+
+Different drives need different tuning. Place a `.pullback-tune.yaml` file on the backup volume to override config.yaml defaults for that specific drive:
+
+```yaml
+# /backup/.pullback-tune.yaml — HDD example
+tuning:
+  bdi_max_bytes: 83886080  # 80 MB cap — essential for slow HDD
+```
+
+An SSD that keeps up with wire speed doesn't need BDI:
+
+```yaml
+# /backup/.pullback-tune.yaml — SSD example
+tuning:
+  bdi_max_bytes: 0  # no cap needed
+```
+
+Drive tuning is applied automatically at sync start. Use `pi-tune-status.sh --save=/backup/.pullback-tune.yaml` to snapshot current live settings onto the drive.
+
+See [TUNING.md](pullback/docs/TUNING.md) for full details.
 
 ### Auto-tuning
 
@@ -391,7 +429,8 @@ venv/bin/python3 cli.py config                        # Show loaded config
 | `pi-setup.sh` | General setup + capture system defaults |
 | `pi-tune-install.sh` | Persist tuning to sysctl + systemd boot service |
 | `pi-tune-revert.sh` | Revert all tuning to OS defaults |
-| `pi-tune-boot.sh` | Applied on boot (RPS, EEE, governor) |
+| `pi-tune-boot.sh` | Applied on boot (RPS, EEE, governor, BDI) |
+| `pi-tune-status.sh` | Show all live tuning settings (`--save` for yaml output) |
 | `pi-bottleneck.sh` | Performance monitor with daemon and report modes |
 | `pi-capture-defaults.sh` | Capture system defaults before tuning |
 
@@ -411,6 +450,7 @@ pullback/
   alerts.py                # Email alerts
   ransomware.py            # Ransomware detection
   retention.py             # Backup version pruning
+  tuning.py                # Per-drive tuning (BDI, sysctl, governor)
   scripts/                 # Setup and maintenance scripts
   static/                  # Dashboard HTML/CSS/JS
   udev/                    # udev rules and systemd service
