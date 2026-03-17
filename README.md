@@ -320,6 +320,14 @@ bash scripts/pi-bottleneck.sh --report=5
 - [TUNEDATA.md](pullback/docs/TUNEDATA.md) — Test results with before/after data
 - [TUNEDEFAULT.md](pullback/docs/TUNEDEFAULT.md) — OS/kernel factory defaults
 
+### View live tuning
+
+```bash
+bash scripts/pi-tune-status.sh
+bash scripts/pi-tune-status.sh --save                              # print yaml to stdout
+bash scripts/pi-tune-status.sh --save=/backup/.pullback-tune.yaml  # save to drive
+```
+
 ### Revert all tuning
 
 ```bash
