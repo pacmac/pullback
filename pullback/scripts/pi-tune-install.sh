@@ -37,6 +37,7 @@ print(f'dirty_ratio={t.get(\"dirty_ratio\", 5)}')
 print(f'dirty_background_ratio={t.get(\"dirty_background_ratio\", 2)}')
 print(f'dirty_expire_centisecs={t.get(\"dirty_expire_centisecs\", 1000)}')
 print(f'dirty_writeback_centisecs={t.get(\"dirty_writeback_centisecs\", 500)}')
+print(f'bdi_max_bytes={t.get(\"bdi_max_bytes\", 0)}')
 print(f'rps_enabled={str(t.get(\"rps_enabled\", True)).lower()}')
 print(f'eee_off={str(t.get(\"eee_off\", True)).lower()}')
 print(f'cpu_governor={t.get(\"cpu_governor\", \"performance\")}')
@@ -56,8 +57,17 @@ fi
 # Parse into variables
 eval "$CFG_OUTPUT"
 
-echo "Config loaded (config.yaml + config.local.yaml merged):"
-echo "  $CFG_OUTPUT" | tr '\n' '  '
+echo ""
+echo "=== Config (merged) ==="
+echo "  dirty_ratio            = ${dirty_ratio}"
+echo "  dirty_background_ratio = ${dirty_background_ratio}"
+echo "  dirty_expire_centisecs = ${dirty_expire_centisecs}"
+echo "  dirty_writeback_centisecs = ${dirty_writeback_centisecs}"
+echo "  bdi_max_bytes          = ${bdi_max_bytes}"
+echo "  rps_enabled            = ${rps_enabled}"
+echo "  eee_off                = ${eee_off}"
+echo "  cpu_governor           = ${cpu_governor}"
+echo "  uas                    = ${uas}"
 echo ""
 
 # ── Write sysctl config (persists automatically) ──
@@ -72,7 +82,6 @@ EOF
 
 sysctl --load="$SYSCTL_DST" >/dev/null 2>&1
 echo "Installed: ${SYSCTL_DST}"
-echo "  dirty_ratio=${dirty_ratio} dirty_bg=${dirty_background_ratio} expire=${dirty_expire_centisecs} writeback=${dirty_writeback_centisecs}"
 
 # ── Generate boot script for non-sysctl settings ──
 
@@ -125,6 +134,25 @@ BOOTEOF
     echo "log \"CPU governor set to ${cpu_governor}\"" >> "$TUNE_SCRIPT"
 fi
 
+if [[ "$bdi_max_bytes" -gt 0 ]] 2>/dev/null; then
+    cat >> "$TUNE_SCRIPT" <<BOOTEOF
+# BDI: per-device dirty page limit for backup drive
+MOUNT_POINT=\$(awk '/\\/backup/{print \$1}' /proc/mounts | head -1)
+if [[ -n "\$MOUNT_POINT" ]]; then
+    BDI_DEV=\$(basename "\$MOUNT_POINT" | sed 's/[0-9]*$//')
+    if [[ -f "/sys/block/\${BDI_DEV}/bdi/strict_limit" ]]; then
+        echo 1 > /sys/block/\${BDI_DEV}/bdi/strict_limit
+        echo ${bdi_max_bytes} > /sys/block/\${BDI_DEV}/bdi/max_bytes
+        log "BDI strict_limit=1 max_bytes=${bdi_max_bytes} on \${BDI_DEV}"
+    else
+        log "BDI sysfs not available for \${BDI_DEV}"
+    fi
+else
+    log "BDI: /backup not mounted, skipping"
+fi
+BOOTEOF
+fi
+
 chmod +x "$TUNE_SCRIPT"
 echo "Generated: ${TUNE_SCRIPT}"
 
@@ -147,19 +175,19 @@ if [[ "$uas" == "true" ]]; then
             PROTO=$(lsusb -v -d "$USB_ID" 2>/dev/null | grep 'bInterfaceProtocol' | head -1 | awk '{print $NF}')
 
             if [[ "$PROTO" == "Bulk-Only" ]]; then
-                echo "USB device ${USB_ID} uses Bulk-Only transport — UAS not supported"
+                echo "UAS: ${USB_ID} Bulk-Only — not supported"
                 sed -i "s| usb-storage.quirks=[0-9a-f:]*:u||g" "$CMDLINE"
             else
                 QUIRK="usb-storage.quirks=${USB_ID}:u"
                 sed -i "s| usb-storage.quirks=[0-9a-f:]*:u||g" "$CMDLINE"
                 sed -i "s|rootwait|rootwait ${QUIRK}|" "$CMDLINE"
-                echo "UAS enabled for ${USB_ID} — REBOOT REQUIRED"
+                echo "UAS: enabled for ${USB_ID} — REBOOT REQUIRED"
             fi
         else
-            echo "WARNING: No USB storage device detected — UAS not configured"
+            echo "UAS: no USB storage device detected"
         fi
     else
-        echo "WARNING: cmdline.txt not found — UAS not configured"
+        echo "UAS: cmdline.txt not found"
     fi
 fi
 
@@ -179,13 +207,22 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 
-echo "Installed: ${SERVICE_DST}"
-
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
 systemctl start "$SERVICE_NAME"
+echo "Installed: ${SERVICE_DST}"
 
-echo "Service ${SERVICE_NAME} started and enabled on boot."
+# ── Summary ──
+
 echo ""
-echo "Current values:"
-sysctl vm.dirty_ratio vm.dirty_background_ratio vm.dirty_expire_centisecs vm.dirty_writeback_centisecs
+echo "=== Applied ==="
+sysctl vm.dirty_ratio vm.dirty_background_ratio vm.dirty_expire_centisecs vm.dirty_writeback_centisecs 2>/dev/null | sed 's/^/  /'
+DISK_DEV=$(df /backup 2>/dev/null | tail -1 | awk '{print $1}' | xargs basename 2>/dev/null | sed 's/[0-9]*$//' || echo "")
+if [[ -n "$DISK_DEV" && -f "/sys/block/${DISK_DEV}/bdi/strict_limit" ]]; then
+    echo "  BDI (${DISK_DEV}): strict_limit=$(cat /sys/block/${DISK_DEV}/bdi/strict_limit) max_bytes=$(cat /sys/block/${DISK_DEV}/bdi/max_bytes)"
+fi
+echo "  governor: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)"
+echo "  RPS: $(cat /sys/class/net/eth0/queues/rx-0/rps_cpus 2>/dev/null)"
+EEE=$(ethtool --show-eee eth0 2>/dev/null | grep -i 'eee status' | awk -F: '{print $2}' | xargs)
+echo "  EEE: ${EEE:-n/a}"
+echo ""
