@@ -78,6 +78,12 @@ causing periodic stalls where network throughput drops to near zero.
 
 **Fix:** Lower dirty ratios to force earlier, smaller flushes.
 
+**Better fix:** Use per-device BDI dirty limits (see BDI section below).
+`dirty_ratio` is a **global** limit — on slow USB devices it throttles writes
+to ALL devices including the SD card, which is why `dirty_bytes=48MB` stalled
+the entire system. BDI `strict_limit` + `max_bytes` constrains only the slow
+device while leaving the rest of the system unaffected.
+
 ---
 
 ## Parameter Reference
@@ -100,23 +106,62 @@ Status key:
 than a USB HDD can flush without stalling. `dirty_ratio=5` (~200MB) keeps
 dirty pages manageable. Dirty pages averaged 57-65MB with these settings.
 
-**Proposed improvement:** Switch from `_ratio` to `_bytes` for absolute
-control independent of RAM size:
+**Rejected: global `dirty_bytes`**
 
-| Parameter | Proposed | Status | Category |
-|-----------|----------|--------|----------|
-| `vm.dirty_bytes` | 50331648 (48 MB) | proposed | general |
-| `vm.dirty_background_bytes` | 16777216 (16 MB) | proposed | general |
-| `vm.dirty_expire_centisecs` | 300 | proposed | general |
-| `vm.dirty_writeback_centisecs` | 100 | proposed | general |
+| Parameter | Tested | Result |
+|-----------|--------|--------|
+| `vm.dirty_bytes` | 50331648 (48 MB) | **stalled system completely** |
+| `vm.dirty_background_bytes` | 16777216 (16 MB) | (tested together) |
 
-**Rationale for `_bytes`:** Absolute values give predictable behaviour
-regardless of RAM. 16MB background / 48MB hard limit is well-tested for USB
-devices. More aggressive expire (3s) and writeback (1s) keep the USB device
-draining continuously.
+Global `dirty_bytes` throttles writes to ALL block devices, not just the
+backup drive. With a cap too low for the incoming data rate, all writers
+are blocked by `balance_dirty_pages()`. This is why `dirty_bytes=48MB`
+stalled the system.
 
-**Caveat:** `dirty_bytes` and `dirty_ratio` are mutually exclusive — setting
-one disables the other.
+### BDI Per-Device Dirty Limits
+
+| Parameter | Default | Value | Status | Category |
+|-----------|---------|-------|--------|----------|
+| `/sys/block/sda/bdi/strict_limit` | 0 | 1 | proven | general |
+| `/sys/block/sda/bdi/max_bytes` | 0 (unlimited) | 83886080 (80 MB) | proven | general |
+
+**Rationale:** The kernel's dirty page throttling (`balance_dirty_pages()`) is
+**global** — when a slow USB device accumulates dirty pages, writes to ALL
+devices are throttled. BDI (Backing Device Info) `strict_limit` enables
+**per-device** enforcement: only writers to the backup drive are throttled when
+that device's dirty pages approach `max_bytes`. Writes to other devices
+(SD card, tmpfs, etc.) are unaffected.
+
+**How it works:** The kernel already implements a feedback loop in
+`balance_dirty_pages()`. It estimates per-device write bandwidth, calculates
+a proportional throttle ratio, and pauses dirtying processes for 10-200ms as
+dirty pages approach the limit. `strict_limit=1` makes this per-device check
+active even when the system-wide dirty level is low. No userspace feedback
+loop is needed.
+
+**Evidence:**
+- Without BDI limit: `dirty_ratio=5` still allowed 127-170 MB dirty
+- With `strict_limit=1` + `max_bytes=80MB`: dirty stayed 15-55 MB, self-correcting
+- Global `dirty_bytes=48MB` stalled the entire system; BDI `max_bytes=80MB` did not
+
+**Apply:**
+```bash
+echo 1 > /sys/block/sda/bdi/strict_limit
+echo 83886080 > /sys/block/sda/bdi/max_bytes
+```
+
+**Available BDI sysfs attributes (kernel 6.1+):**
+- `strict_limit` — enforce per-device dirty checks before global thresholds
+- `max_bytes` — absolute byte limit on dirty pages for this device
+- `max_ratio` — percentage-based limit (less precise)
+- `min_bytes` / `min_ratio` — guarantee minimum writeback cache share (QoS)
+
+**Why not dynamic userspace tuning?** The kernel's `balance_dirty_pages()`
+already IS a feedback loop — it continuously estimates device bandwidth and
+proportionally throttles writers. A userspace script adjusting `dirty_bytes`
+would fight this mechanism, and the global nature of `dirty_bytes` means it
+would affect all devices. BDI `max_bytes` operates per-device within the
+kernel's own feedback loop, which is strictly superior.
 
 ### Network Stack
 
@@ -170,8 +215,8 @@ on a dedicated appliance.
 | CPU governor | ondemand | performance | proven | pi |
 
 **Rationale:** Max clock frequency eliminates frequency scaling latency.
-Critical for SSH encryption throughput on Pi (no AES-NI). Measured 35-45 MB/s
-with ondemand vs 54 MB/s with performance.
+Measured with BDI+RPS enabled, rsync daemon mode: performance avg=51 MB/s
+vs ondemand avg=40 MB/s (+25%, 300s, 27 samples each).
 
 **Caveat:** Pi 4 Cortex-A72 throttles at ~80C. Ensure adequate cooling
 (heatsink or fan).
@@ -181,14 +226,15 @@ with ondemand vs 54 MB/s with performance.
 | Parameter | Default | Value | Status | Category |
 |-----------|---------|-------|--------|----------|
 | I/O scheduler | varies | mq-deadline | proposed | general |
-| Block read-ahead | 256 sectors (128 KB) | 4096 sectors (2 MB) | proposed | general |
+| Block read-ahead | 256 sectors (128 KB) | 256 sectors (128 KB) | rejected | general |
 
 **Rationale (scheduler):** `mq-deadline` provides deadline guarantees for
 rotational media, preventing starvation. `bfq` has higher CPU overhead.
 `none`/`noop` is for SSDs only — USB HDDs have physical seek times.
 
-**Rationale (read-ahead):** Larger read-ahead suits rsync's sequential
-patterns. 2MB is a good balance — above 4-8MB gives diminishing returns.
+**Rationale (read-ahead):** Tested 4096 sectors (2MB) vs default 256 sectors.
+Throughput halved (Net 25→13 MB/s). Read-ahead primarily affects reads, not
+writes. Default 256 is correct for this write-heavy workload.
 
 **Apply via udev rule:**
 ```
@@ -373,14 +419,20 @@ tuning:
   dirty_background_ratio: 2
   dirty_expire_centisecs: 1000
   dirty_writeback_centisecs: 500
+  bdi_max_bytes: 83886080  # 80 MB per-device cap for backup drive
   rps_enabled: true
   eee_off: true
   cpu_governor: performance
 ```
 
+**`bdi_max_bytes`:** Per-device dirty page cap applied to the backup drive
+via `/sys/block/<dev>/bdi/max_bytes` with `strict_limit=1`. This caps dirty
+pages for the backup drive only, without throttling other devices. Set to 0
+to disable.
+
 All values are read by `pi-tune-install.sh` and written to:
 - `/etc/sysctl.d/99-pullback.conf` — dirty page settings (persist via sysctl)
-- `scripts/pi-tune-boot.sh` — RPS, EEE, governor (run on boot via systemd)
+- `scripts/pi-tune-boot.sh` — RPS, EEE, governor, BDI limits (run on boot via systemd)
 
 ## UAS (USB Attached SCSI)
 
