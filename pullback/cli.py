@@ -327,9 +327,81 @@ def _val_str(val):
     return str(val)
 
 
-def _dd_measure_tmpfs(dd_size_mb=2048):
-    """Run dd to /dev/shm (tmpfs) to measure network-isolated write speed."""
-    return _dd_measure("/dev/shm", dd_size_mb)
+def _net_measure(cfg, seconds=15):
+    """Measure network receive throughput by rsyncing from source to tmpfs.
+
+    Pulls data from the configured source host into /dev/shm to eliminate
+    disk as a variable. Measures rx_bytes over the transfer.
+    """
+    tmpfs_dir = "/dev/shm/autotune_net_test"
+    os.makedirs(tmpfs_dir, exist_ok=True)
+
+    # Get source from config
+    sources = cfg.get("sources", {})
+    if not sources:
+        _log_warn("No sources configured")
+        return {"net_avg": 0}
+
+    source_name = list(sources.keys())[0]
+    source = sources[source_name]
+    host = source.get("host", "")
+    remote_root = source.get("remote_root", "/")
+    transport = source.get("transport", "ssh")
+    folders = source.get("folders", [])
+    folder_path = folders[0]["path"] if folders else ""
+
+    # Build rsync command to tmpfs
+    if transport == "rsync":
+        module = source.get("rsync_module", "backup")
+        rsync_cmd = f"rsync --archive --numeric-ids --partial {host}::{module}/{folder_path}/ {tmpfs_dir}/ >/dev/null 2>&1"
+    else:
+        ssh_cfg = cfg.get("ssh", {})
+        key = ssh_cfg.get("key", "")
+        cipher = ssh_cfg.get("cipher", "aes128-gcm@openssh.com")
+        rsync_cmd = (
+            f"rsync --archive --numeric-ids --partial "
+            f"-e 'ssh -i {key} -c {cipher}' "
+            f"root@{host}:{remote_root}{folder_path}/ {tmpfs_dir}/ >/dev/null 2>&1"
+        )
+
+    # Start rsync in background
+    proc = subprocess.Popen(rsync_cmd, shell=True)
+    time.sleep(2)
+
+    # Sample rx_bytes
+    iface = cfg.get("tuning", {}).get("net_interface", "eth0")
+    rx_path = f"/sys/class/net/{iface}/statistics/rx_bytes"
+    samples = []
+    prev_rx = int(tuning._read_sysfs(rx_path) or 0)
+    prev_time = time.time()
+    end_time = prev_time + seconds
+
+    while time.time() < end_time and proc.poll() is None:
+        time.sleep(2)
+        curr_rx = int(tuning._read_sysfs(rx_path) or 0)
+        curr_time = time.time()
+        dt = curr_time - prev_time
+        if dt > 0:
+            mb_s = (curr_rx - prev_rx) / (1024 * 1024) / dt
+            samples.append(int(mb_s))
+        prev_rx = curr_rx
+        prev_time = curr_time
+
+    # Kill rsync and clean up
+    proc.kill()
+    proc.wait()
+    import shutil
+    shutil.rmtree(tmpfs_dir, ignore_errors=True)
+
+    if not samples:
+        return {"net_avg": 0, "disk_avg": 0}
+
+    return {
+        "net_avg": sum(samples) // len(samples),
+        "disk_avg": sum(samples) // len(samples),  # use same key so sweep logic works
+        "dirty_avg": 0,
+        "dirty_max": 0,
+    }
 
 
 def _dd_measure(mount_point, dd_size_mb=2048):
@@ -431,7 +503,7 @@ def cmd_tune_autotune(args):
 
     # Pick measurement function by layer
     if layer == "network":
-        measure = lambda: _dd_measure_tmpfs(dd_size)
+        measure = lambda: _net_measure(cfg)
     else:
         measure = lambda: _dd_measure(mount_point, dd_size)
 
