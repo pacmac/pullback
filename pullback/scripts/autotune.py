@@ -2,10 +2,9 @@
 """autotune.py — Automated per-layer tuning with measurement.
 
 Tests tuning parameters one at a time in logical layer order:
-  1. Network  (RPS, EEE, tcp buffers) — uses tmpfs, no sync needed
-  2. CPU      (governor)
-  3. Disk I/O (scheduler, read-ahead) — needs active sync
-  4. Dirty    (dirty_ratio, BDI) — needs active sync
+  1. Network  (tcp buffers, backlog) — uses tmpfs, no sync needed
+  2. Write    (RPS, EEE, governor, scheduler, dirty, BDI) — needs active sync
+  3. rsync    (cipher, transport, flags) — needs active sync
 
 Usage:
   autotune.py                        # run all layers
@@ -122,44 +121,43 @@ PARAMS = [
         read_cmd="sysctl -n net.core.netdev_max_backlog",
         metric="net_avg",
     ),
-    # ── Layer 2: CPU + interrupt distribution (needs sync load) ──
-    # RPS and EEE interact with disk I/O — CPU0 saturates under
-    # combined NET_RX + writeback load, not under network-only load.
+    # ── Layer 2: Write speed (all params that affect disk write throughput) ──
+    # Needs active sync. Tests kernel tuning that affects how fast
+    # data gets from network receive buffers onto the physical disk.
     Param(
         name="rps_cpus_0xc",
-        layer="cpu",
+        layer="write",
         description="RPS distribute NET_RX to CPU2+3 (relieves CPU0 under disk+net load)",
         apply_cmd="echo c > /sys/class/net/eth0/queues/rx-0/rps_cpus && echo 32768 > /proc/sys/net/core/rps_sock_flow_entries",
         revert_cmd="echo 0 > /sys/class/net/eth0/queues/rx-0/rps_cpus && echo 0 > /proc/sys/net/core/rps_sock_flow_entries",
         read_cmd="cat /sys/class/net/eth0/queues/rx-0/rps_cpus",
         requires_sync=True,
-        metric="net_avg",
+        metric="disk_avg",
     ),
     Param(
         name="eee_off",
-        layer="cpu",
+        layer="write",
         description="Disable EEE (bcmgenet bug causes packet drops under sustained load)",
         apply_cmd="ethtool --set-eee eth0 eee off 2>/dev/null",
         revert_cmd="ethtool --set-eee eth0 eee on 2>/dev/null",
         read_cmd="ethtool --show-eee eth0 2>/dev/null | grep -i 'eee status' | awk -F: '{print $2}' | xargs",
         requires_sync=True,
-        metric="net_avg",
+        metric="disk_avg",
     ),
     Param(
         name="governor_performance",
-        layer="cpu",
+        layer="write",
         description="CPU governor: performance (max clock, no scaling latency)",
         apply_cmd="echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor > /dev/null",
         revert_cmd="echo ondemand | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor > /dev/null",
         read_cmd="cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",
         requires_sync=True,
-        metric="net_avg",
+        metric="disk_avg",
         drive_type="hdd",  # no gain measured on SSD
     ),
-    # ── Layer 3: Disk I/O ──
     Param(
         name="scheduler_mq_deadline",
-        layer="disk",
+        layer="write",
         description="I/O scheduler: mq-deadline (deadline guarantees for rotational)",
         apply_cmd="echo mq-deadline > /sys/block/{dev}/queue/scheduler",
         revert_cmd="echo none > /sys/block/{dev}/queue/scheduler",
@@ -168,10 +166,9 @@ PARAMS = [
         metric="disk_avg",
         drive_type="hdd",
     ),
-    # ── Layer 4: Dirty pages ──
     Param(
         name="dirty_ratio_5",
-        layer="dirty",
+        layer="write",
         description="dirty_ratio=5, background=2 (force earlier flushes)",
         apply_cmd="sysctl -w vm.dirty_ratio=5 vm.dirty_background_ratio=2 > /dev/null",
         revert_cmd="sysctl -w vm.dirty_ratio=20 vm.dirty_background_ratio=10 > /dev/null",
@@ -181,7 +178,7 @@ PARAMS = [
     ),
     Param(
         name="dirty_expire_1000",
-        layer="dirty",
+        layer="write",
         description="dirty_expire_centisecs=1000 (flush stale pages sooner)",
         apply_cmd="sysctl -w vm.dirty_expire_centisecs=1000 > /dev/null",
         revert_cmd="sysctl -w vm.dirty_expire_centisecs=3000 > /dev/null",
@@ -191,7 +188,7 @@ PARAMS = [
     ),
     Param(
         name="bdi_80m",
-        layer="dirty",
+        layer="write",
         description="BDI strict_limit=1 + max_bytes=80MB (per-device dirty cap)",
         apply_cmd="echo 1 > /sys/block/{dev}/bdi/strict_limit && echo 83886080 > /sys/block/{dev}/bdi/max_bytes",
         revert_cmd="echo 0 > /sys/block/{dev}/bdi/strict_limit && echo 0 > /sys/block/{dev}/bdi/max_bytes",
@@ -199,6 +196,19 @@ PARAMS = [
         requires_sync=True,
         metric="dirty_avg",
         drive_type="hdd",
+    ),
+    # ── Layer 3: rsync optimisation (transport and flags) ──
+    # Tests the rsync transfer itself — cipher, transport mode, flags.
+    # These change HOW data moves, not how the kernel handles writes.
+    Param(
+        name="cipher_aes128_ctr",
+        layer="rsync",
+        description="SSH cipher aes128-ctr (faster in software on Pi, no AES-NI)",
+        apply_cmd="true",  # applied via config, not sysctl — placeholder
+        revert_cmd="true",
+        read_cmd="echo 'requires config change'",
+        requires_sync=True,
+        metric="net_avg",
     ),
 ]
 
@@ -382,8 +392,11 @@ def measure_bottleneck(seconds: int) -> dict:
     log_file = STATE_DIR / "bottleneck.log"
     log_file.write_text("")
 
-    # Run bottleneck in daemon mode
-    run(f"bash {BOTTLENECK} --runsec={seconds} --daemon", timeout=5)
+    # Launch bottleneck as a background process (it collects samples in a loop)
+    subprocess.Popen(
+        f"bash {BOTTLENECK} --runsec={seconds} --daemon",
+        shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
     time.sleep(seconds + 5)
 
     # Get report
@@ -583,7 +596,7 @@ def run_layer(
 
 def main():
     parser = argparse.ArgumentParser(description="Automated per-layer tuning")
-    parser.add_argument("--layer", choices=["network", "cpu", "disk", "dirty"],
+    parser.add_argument("--layer", choices=["network", "write", "rsync"],
                         help="Run a specific layer only")
     parser.add_argument("--sample", type=int, default=120,
                         help="Sample duration in seconds (default: 120)")
@@ -623,7 +636,7 @@ def main():
     if args.layer:
         layers = [args.layer]
     else:
-        layers = ["network", "cpu", "disk", "dirty"]
+        layers = ["network", "write", "rsync"]
 
     log_info(f"Layers: {', '.join(layers)}")
     log_info(f"Sample: {args.sample}s per test")
