@@ -44,6 +44,7 @@ tuning:
   eee_off: true
   cpu_governor: performance
   scheduler: mq-deadline
+  tcp_slow_start_after_idle: 0
   # nr_requests and max_sectors_kb: left at OS defaults until tested
   # nr_requests: 64
   # max_sectors_kb: 512

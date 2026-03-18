@@ -106,6 +106,34 @@ PARAM_REGISTRY = [
         "sysfs": "/sys/block/{dev}/queue/max_sectors_kb",
         "default": 256,
     },
+    {
+        "key": "tcp_slow_start_after_idle",
+        "description": "TCP slow start after idle",
+        "type": "sysctl",
+        "sysctl": "net.ipv4.tcp_slow_start_after_idle",
+        "default": 1,
+    },
+    {
+        "key": "rmem_max",
+        "description": "Socket receive buffer max",
+        "type": "sysctl",
+        "sysctl": "net.core.rmem_max",
+        "default": 212992,
+    },
+    {
+        "key": "wmem_max",
+        "description": "Socket send buffer max",
+        "type": "sysctl",
+        "sysctl": "net.core.wmem_max",
+        "default": 212992,
+    },
+    {
+        "key": "netdev_max_backlog",
+        "description": "Network device backlog queue",
+        "type": "sysctl",
+        "sysctl": "net.core.netdev_max_backlog",
+        "default": 1000,
+    },
 ]
 
 
