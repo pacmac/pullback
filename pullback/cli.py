@@ -327,6 +327,11 @@ def _val_str(val):
     return str(val)
 
 
+def _dd_measure_tmpfs(dd_size_mb=2048):
+    """Run dd to /dev/shm (tmpfs) to measure network-isolated write speed."""
+    return _dd_measure("/dev/shm", dd_size_mb)
+
+
 def _dd_measure(mount_point, dd_size_mb=2048):
     """Run dd, return {disk_avg, dirty_avg, dirty_max}."""
     test_file = f"{mount_point}/.autotune_write_test"
@@ -424,6 +429,12 @@ def cmd_tune_autotune(args):
         _log_info("╚══ DRY RUN ══╝")
         return
 
+    # Pick measurement function by layer
+    if layer == "network":
+        measure = lambda: _dd_measure_tmpfs(dd_size)
+    else:
+        measure = lambda: _dd_measure(mount_point, dd_size)
+
     # Reset all sweep params to defaults
     _log_info("Resetting sweep params to defaults...")
     for s in sweeps:
@@ -433,7 +444,7 @@ def cmd_tune_autotune(args):
 
     # Baseline
     _log_info("━━━ Baseline ━━━")
-    bl = _dd_measure(mount_point, dd_size)
+    bl = measure()
     current_speed = bl.get("disk_avg", 0)
     _log(f"    {current_speed} MB/s, dirty avg={bl.get('dirty_avg','?')} max={bl.get('dirty_max','?')}")
     print()
@@ -450,7 +461,7 @@ def cmd_tune_autotune(args):
 
         for val in s["values"]:
             _apply_sweep_value(key, val, dev, mount_point, tuning_cfg)
-            m = _dd_measure(mount_point, dd_size)
+            m = measure()
             spd = m.get("disk_avg", 0)
             da = m.get("dirty_avg", "?")
             dm = m.get("dirty_max", "?")
@@ -477,7 +488,7 @@ def cmd_tune_autotune(args):
 
     # Final confirmation
     _log_info("━━━ Final confirmation ━━━")
-    f = _dd_measure(mount_point, dd_size)
+    f = measure()
     _log_ok(f"    FINAL: {f.get('disk_avg','?')} MB/s, dirty avg={f.get('dirty_avg','?')} max={f.get('dirty_max','?')} MB")
     dm = f.get("dirty_max")
     if isinstance(dm, int) and dm < 80:
@@ -559,7 +570,7 @@ def main():
     tc = tune_sub.add_parser("capture", help="Capture OS defaults to file")
     tc.add_argument("--force", action="store_true")
     ta = tune_sub.add_parser("autotune", help="Sweep tuning params")
-    ta.add_argument("layer", nargs="?", default="disk",
+    ta.add_argument("--layer", default="disk",
                     choices=["disk", "network", "rsync"],
                     help="Layer to autotune (default: disk)")
     ta.add_argument("--dry-run", action="store_true")
