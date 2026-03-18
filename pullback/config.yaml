@@ -53,7 +53,7 @@ autotune:
   dd_size_mb: 2048  # dd test file size for write layer
   disk:
     bdi_max_bytes: [41943040, 62914560, 83886080, 104857600, 125829120]
-    dirty_ratio_pairs: [[3,1], [5,2], [10,3], [15,5], [20,5]]
+    dirty_ratio_pairs: [[1,1], [2,1], [3,1], [5,2], [10,3]]
     dirty_expire_centisecs: [100, 200, 300, 500, 1000]
     dirty_writeback_centisecs: [50, 100, 200, 300, 500]
     scheduler: [mq-deadline, bfq]
