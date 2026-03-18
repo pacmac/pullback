@@ -185,7 +185,13 @@ def read_live(mount_point="/backup"):
             values[key] = _sysctl_get(p["sysctl"])
         elif ptype == "sysfs":
             path = p["sysfs"].replace("{dev}", dev or "sda")
-            values[key] = _read_sysfs(path)
+            raw = _read_sysfs(path)
+            # Parse scheduler format: "none [mq-deadline] kyber bfq" → "mq-deadline"
+            if key == "scheduler" and raw and "[" in raw:
+                import re
+                m = re.search(r"\[(\S+)\]", raw)
+                raw = m.group(1) if m else raw
+            values[key] = raw
         elif ptype == "bdi":
             if dev:
                 strict = _read_sysfs(p["sysfs_strict"].replace("{dev}", dev))
