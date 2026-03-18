@@ -524,7 +524,35 @@ def cmd_tune_autotune(args):
     _log_info("Resetting sweep params to defaults...")
     for s in sweeps:
         _apply_sweep_value(s["key"], s["default"], dev, mount_point, tuning_cfg)
-    _log_ok("All defaults applied")
+
+    # Verify reset worked
+    live = tuning.read_live(mount_point, tuning_cfg)
+    reset_ok = True
+    for s in sweeps:
+        key = s["key"]
+        expected = s["default"]
+        if key == "dirty_ratio_pairs":
+            actual_r = live.get("dirty_ratio")
+            actual_b = live.get("dirty_background_ratio")
+            exp_str = f"ratio={expected[0]}/bg={expected[1]}"
+            act_str = f"ratio={actual_r}/bg={actual_b}"
+            if str(actual_r) != str(expected[0]) or str(actual_b) != str(expected[1]):
+                _log_warn(f"    RESET FAILED: {key} expected {exp_str} got {act_str}")
+                reset_ok = False
+            else:
+                _log(f"    {key}: {act_str} ✓")
+        else:
+            actual = live.get(key)
+            if str(actual) != str(expected):
+                _log_warn(f"    RESET FAILED: {key} expected {expected} got {actual}")
+                reset_ok = False
+            else:
+                _log(f"    {key}: {actual} ✓")
+
+    if reset_ok:
+        _log_ok("All defaults verified")
+    else:
+        _log_warn("Some params did not reset — results may be unreliable")
     print()
 
     # Baseline
