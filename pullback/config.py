@@ -26,6 +26,21 @@ def load_config(path=None):
 
     _validate(cfg, path)
     _apply_defaults(cfg)
+
+    # Merge drive-specific tuning from .pullback-tune.yaml on the backup volume.
+    # This is the final override — drive values win over config.yaml and config.local.yaml.
+    mount_point = cfg.get("mount_point", "/backup")
+    tune_path = Path(mount_point) / ".pullback-tune.yaml"
+    if tune_path.exists():
+        try:
+            with open(tune_path) as f:
+                drive = yaml.safe_load(f)
+            if drive and "tuning" in drive:
+                cfg.setdefault("tuning", {})
+                cfg["tuning"].update(drive["tuning"])
+        except (OSError, yaml.YAMLError):
+            pass
+
     return cfg
 
 
@@ -137,10 +152,23 @@ def _apply_defaults(cfg):
 # Run standalone to test config loading
 if __name__ == "__main__":
     import json
-    path = sys.argv[1] if len(sys.argv) > 1 else None
+
+    args = sys.argv[1:]
+    path = None
+    dump_yaml = False
+
+    for arg in args:
+        if arg == "--dump":
+            dump_yaml = True
+        else:
+            path = arg
+
     try:
         cfg = load_config(path)
-        print(json.dumps(cfg, indent=2))
+        if dump_yaml:
+            print(yaml.dump(cfg, default_flow_style=False, sort_keys=False))
+        else:
+            print(json.dumps(cfg, indent=2))
     except (ValueError, FileNotFoundError) as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)

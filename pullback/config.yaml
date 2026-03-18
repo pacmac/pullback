@@ -40,6 +40,9 @@ tuning:
   rps_enabled: true
   eee_off: true
   cpu_governor: performance
+  scheduler: mq-deadline
+  nr_requests: 64
+  max_sectors_kb: 512
 
 usb:
   flag_file: .pullback-volume
