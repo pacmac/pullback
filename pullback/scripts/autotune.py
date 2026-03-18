@@ -93,25 +93,8 @@ class Param:
 
 # Block device is detected at runtime — these use {dev} placeholder
 PARAMS = [
-    # ── Layer 1: Network ──
-    Param(
-        name="rps_cpus_0xc",
-        layer="network",
-        description="RPS distribute NET_RX to CPU2+3",
-        apply_cmd="echo c > /sys/class/net/eth0/queues/rx-0/rps_cpus && echo 32768 > /proc/sys/net/core/rps_sock_flow_entries",
-        revert_cmd="echo 0 > /sys/class/net/eth0/queues/rx-0/rps_cpus && echo 0 > /proc/sys/net/core/rps_sock_flow_entries",
-        read_cmd="cat /sys/class/net/eth0/queues/rx-0/rps_cpus",
-        metric="net_avg",
-    ),
-    Param(
-        name="eee_off",
-        layer="network",
-        description="Disable Energy Efficient Ethernet (bcmgenet bug)",
-        apply_cmd="ethtool --set-eee eth0 eee off 2>/dev/null",
-        revert_cmd="ethtool --set-eee eth0 eee on 2>/dev/null",
-        read_cmd="ethtool --show-eee eth0 2>/dev/null | grep -i 'eee status' | awk -F: '{print $2}' | xargs",
-        metric="net_avg",
-    ),
+    # ── Layer 1: Network (pure TCP, no disk interaction) ──
+    # Confirmed default-ok at gigabit (117 MB/s to tmpfs, 2026-03-18)
     Param(
         name="tcp_slow_start_off",
         layer="network",
@@ -139,7 +122,29 @@ PARAMS = [
         read_cmd="sysctl -n net.core.netdev_max_backlog",
         metric="net_avg",
     ),
-    # ── Layer 2: CPU ──
+    # ── Layer 2: CPU + interrupt distribution (needs sync load) ──
+    # RPS and EEE interact with disk I/O — CPU0 saturates under
+    # combined NET_RX + writeback load, not under network-only load.
+    Param(
+        name="rps_cpus_0xc",
+        layer="cpu",
+        description="RPS distribute NET_RX to CPU2+3 (relieves CPU0 under disk+net load)",
+        apply_cmd="echo c > /sys/class/net/eth0/queues/rx-0/rps_cpus && echo 32768 > /proc/sys/net/core/rps_sock_flow_entries",
+        revert_cmd="echo 0 > /sys/class/net/eth0/queues/rx-0/rps_cpus && echo 0 > /proc/sys/net/core/rps_sock_flow_entries",
+        read_cmd="cat /sys/class/net/eth0/queues/rx-0/rps_cpus",
+        requires_sync=True,
+        metric="net_avg",
+    ),
+    Param(
+        name="eee_off",
+        layer="cpu",
+        description="Disable EEE (bcmgenet bug causes packet drops under sustained load)",
+        apply_cmd="ethtool --set-eee eth0 eee off 2>/dev/null",
+        revert_cmd="ethtool --set-eee eth0 eee on 2>/dev/null",
+        read_cmd="ethtool --show-eee eth0 2>/dev/null | grep -i 'eee status' | awk -F: '{print $2}' | xargs",
+        requires_sync=True,
+        metric="net_avg",
+    ),
     Param(
         name="governor_performance",
         layer="cpu",
