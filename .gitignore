@@ -7,6 +7,7 @@ pullback/venv/
 pullback/config.local.yaml
 
 # Host-specific captured defaults
+pullback/docs/TUNEDEFAULT.local.yaml
 pullback/docs/TUNEDEFAULT.local.md
 
 # Runtime state

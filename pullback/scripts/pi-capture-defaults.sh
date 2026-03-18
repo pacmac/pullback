@@ -8,7 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VENV_PYTHON="${PROJECT_DIR}/venv/bin/python3"
-OUTPUT="${PROJECT_DIR}/docs/TUNEDEFAULT.local.md"
+OUTPUT="${PROJECT_DIR}/docs/TUNEDEFAULT.local.yaml"
 
 if [[ ! -f "$VENV_PYTHON" ]]; then
     VENV_PYTHON="python3"
@@ -24,21 +24,12 @@ echo "[capture-defaults] Capturing system defaults to ${OUTPUT}"
 
 cd "$PROJECT_DIR"
 
-cat > "$OUTPUT" <<EOF
-# Tuning Defaults — Captured from $(hostname) on $(date -Iseconds)
-
-These are the ACTUAL values from this host before any pullback tuning.
-Use these to revert any change that doesn't show measurable improvement.
-
-## Tuning Parameters (via tuning.py)
-
-$("$VENV_PYTHON" -c "from tuning import status_yaml; print(status_yaml())")
-
-## Existing sysctl overrides
-
-$(ls /etc/sysctl.d/ 2>/dev/null || echo "none")
-
-EOF
+{
+    echo "# Tuning defaults — captured from $(hostname) on $(date -Iseconds)"
+    echo "# Run BEFORE applying any tuning. Used to revert to OS defaults."
+    echo ""
+    "$VENV_PYTHON" -c "from tuning import status_yaml; print(status_yaml())"
+} > "$OUTPUT"
 
 echo "[capture-defaults] Defaults captured to ${OUTPUT}"
 echo "[capture-defaults] Review the file, then proceed with tuning one parameter at a time."
