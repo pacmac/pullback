@@ -604,6 +604,15 @@ def run_layer(
             log_err("Sync not running — required for this layer. Skipping.")
             return []
 
+    # Reset all params in this layer to defaults before testing
+    if not dry_run:
+        log_info("Resetting all params to defaults...")
+        for param in params:
+            revert_cmd = resolve_cmd(param.revert_cmd, dev)
+            run(revert_cmd)
+        log_ok("All defaults applied")
+        print()
+
     results = []
     for param in params:
         result = test_param(param, dev, sample_secs, dry_run)
