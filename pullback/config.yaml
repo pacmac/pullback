@@ -35,8 +35,8 @@ tuning:
   dirty_ratio: 5
   dirty_background_ratio: 2
   dirty_expire_centisecs: 1000
-  dirty_writeback_centisecs: 500
-  bdi_max_bytes: 83886080  # 80 MB — per-device dirty page cap for backup drive
+  dirty_writeback_centisecs: 100
+  bdi_max_bytes: 62914560  # 60 MB — per-device dirty page cap for backup drive
   rps_enabled: true
   eee_off: true
   cpu_governor: performance
