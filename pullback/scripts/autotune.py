@@ -383,107 +383,61 @@ def _measure_network(seconds: int) -> dict:
 
 
 def measure_write_speed(seconds: int) -> dict:
-    """Measure raw disk write speed using dd to the backup volume.
+    """Measure raw disk write speed: dd 2GB conv=fdatasync.
 
-    Runs a continuous dd (no count limit), waits for steady-state,
-    then samples /proc/diskstats and /proc/meminfo for the requested
-    duration. Kills dd and cleans up after.
-
-    Returns disk_avg, disk_min, disk_max (MB/s) and dirty_avg, dirty_max (MB).
+    Monitors dirty pages every second during the write.
+    Parses dd's own reported speed.
     """
     test_file = f"{MOUNT_POINT}/.autotune_write_test"
-    dev = detect_block_device() or "sda"
 
-    # Wait for any previous writes to fully flush
-    run("sync", timeout=120)
-    time.sleep(3)
-
-    # Start dd with no count limit — runs until killed
-    # No oflag=direct — we WANT to go through the page cache so dirty
-    # page tuning params (dirty_ratio, BDI) are actually exercised.
-    dd_proc = subprocess.Popen(
-        f"dd if=/dev/zero of={test_file} bs=1M 2>/dev/null",
-        shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-
-    # Warmup — let dd fill the page cache and reach steady-state
-    log(f"    dd warmup (15s)...")
-    time.sleep(15)
-
-    if dd_proc.poll() is not None:
-        log_err("dd exited during warmup")
-        try:
-            os.remove(test_file)
-        except OSError:
-            pass
-        return {}
-
-    # Now sample steady-state
-    log(f"    sampling {seconds}s steady-state...")
-    samples_disk = []
-    samples_dirty = []
-
-    prev_sectors = _read_disk_sectors(dev)
-    prev_time = time.time()
-    end_time = prev_time + seconds
-
-    while time.time() < end_time and dd_proc.poll() is None:
-        time.sleep(2)
-
-        curr_sectors = _read_disk_sectors(dev)
-        curr_time = time.time()
-        dt = curr_time - prev_time
-
-        if dt > 0 and curr_sectors is not None and prev_sectors is not None:
-            mb_s = ((curr_sectors - prev_sectors) * 512) / (1024 * 1024) / dt
-            samples_disk.append(int(mb_s))
-
-        dirty_mb = _read_dirty_mb()
-        if dirty_mb is not None:
-            samples_dirty.append(dirty_mb)
-
-        prev_sectors = curr_sectors
-        prev_time = curr_time
-
-    # Kill dd and clean up
-    dd_proc.kill()
-    dd_proc.wait()
     try:
         os.remove(test_file)
     except OSError:
         pass
-    # Flush remaining writes — can take a while after large dd
-    run("sync", timeout=120)
 
-    metrics = {}
-    if samples_disk:
-        metrics["disk_avg"] = sum(samples_disk) // len(samples_disk)
-        metrics["disk_min"] = min(samples_disk)
-        metrics["disk_max"] = max(samples_disk)
-    if samples_dirty:
-        metrics["dirty_avg"] = sum(samples_dirty) // len(samples_dirty)
-        metrics["dirty_min"] = min(samples_dirty)
-        metrics["dirty_max"] = max(samples_dirty)
-    metrics["samples"] = len(samples_disk)
+    # dd 2GB with fdatasync — captures real write speed including flush
+    dd_proc = subprocess.Popen(
+        f"dd if=/dev/zero of={test_file} bs=1M count=2048 conv=fdatasync",
+        shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+    )
 
-    if not samples_disk:
-        log_err("No disk samples collected")
+    # Sample dirty pages every second while dd runs
+    dirty_samples = []
+    while dd_proc.poll() is None:
+        dirty_mb = _read_dirty_mb()
+        if dirty_mb is not None:
+            dirty_samples.append(dirty_mb)
+        time.sleep(1)
+
+    # Parse dd stderr for speed
+    dd_stderr = dd_proc.stderr.read()
+    disk_mb_s = 0
+    m = re.search(r"([\d.]+)\s+MB/s", dd_stderr)
+    if m:
+        disk_mb_s = int(float(m.group(1)))
+    else:
+        log_err(f"Could not parse dd output: {dd_stderr.strip()}")
+
+    try:
+        os.remove(test_file)
+    except OSError:
+        pass
+
+    metrics = {
+        "disk_avg": disk_mb_s,
+        "samples": len(dirty_samples),
+    }
+    if dirty_samples:
+        metrics["dirty_avg"] = sum(dirty_samples) // len(dirty_samples)
+        metrics["dirty_max"] = max(dirty_samples)
+
+    if dirty_samples:
+        log(f"    {disk_mb_s} MB/s, dirty avg={metrics['dirty_avg']} max={metrics['dirty_max']} MB")
+    else:
+        log(f"    {disk_mb_s} MB/s")
 
     return metrics
 
-
-def _read_disk_sectors(dev: str) -> Optional[int]:
-    """Read total sectors written from /proc/diskstats for device."""
-    try:
-        with open("/proc/diskstats") as f:
-            for line in f:
-                parts = line.split()
-                if len(parts) >= 10 and parts[2] == dev:
-                    # Field 10 (index 9) = sectors written
-                    return int(parts[9])
-    except (IOError, IndexError, ValueError):
-        pass
-    return None
 
 
 def _read_dirty_mb() -> Optional[int]:
@@ -660,8 +614,23 @@ def run_layer(
     kept = [r for r in results if r.get("action") == "keep"]
     reverted = [r for r in results if r.get("action") == "revert"]
     log_info(f"╚══ Layer {layer.upper()} done: {len(kept)} kept, {len(reverted)} reverted ══╝")
-    print()
 
+    # Final confirmation run with all winners still applied
+    if kept and not dry_run and layer == "write":
+        print()
+        log_info("━━━ Final confirmation with all winners applied ━━━")
+        measure = _get_measure_fn(layer)
+        final = measure(sample_secs)
+        disk = final.get("disk_avg", "?")
+        dirty_avg = final.get("dirty_avg", "?")
+        dirty_max = final.get("dirty_max", "?")
+        log_ok(f"    FINAL: {disk} MB/s, dirty avg={dirty_avg} max={dirty_max} MB")
+        if isinstance(dirty_max, int) and dirty_max < 80:
+            log_ok(f"    ✓ dirty max {dirty_max} MB < 80 MB target")
+        elif isinstance(dirty_max, int):
+            log_warn(f"    ✗ dirty max {dirty_max} MB >= 80 MB target — needs BDI tuning")
+
+    print()
     return results
 
 
