@@ -168,7 +168,7 @@ WRITE_PARAMS = [
     {
         "name": "dirty_ratio/bg_ratio",
         "description": "Dirty page ratio pair (ratio, background_ratio)",
-        "values": [(2, 5), (3, 10), (5, 15), (5, 20)],
+        "values": [(5, 2), (10, 3), (15, 5), (20, 5)],
         "default": (20, 10),
         "apply": lambda v, dev: run(
             f"sysctl -w vm.dirty_ratio={v[0]} vm.dirty_background_ratio={v[1]} > /dev/null"
