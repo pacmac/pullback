@@ -322,7 +322,7 @@ def _apply_sweep_value(key, val, dev, mount_point, tuning_cfg):
 def _val_str(val):
     if isinstance(val, (list, tuple)) and len(val) == 2:
         return f"ratio={val[0]}/bg={val[1]}"
-    elif isinstance(val, int) and val > 10000:
+    elif isinstance(val, int) and val >= 1048576:  # >= 1MB
         return f"{val // (1024*1024)}MB"
     return str(val)
 
