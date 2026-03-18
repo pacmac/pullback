@@ -59,6 +59,7 @@ autotune:
     scheduler: [mq-deadline, bfq]
     nr_requests: [2, 4, 8, 16, 32, 64]
     max_sectors_kb: [128, 256, 512]
+    read_ahead_kb: [128, 256, 512, 1024, 2048]
   network:
     tcp_slow_start_after_idle: [0, 1]
     rmem_max: [212992, 16777216]

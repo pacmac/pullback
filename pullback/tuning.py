@@ -107,6 +107,13 @@ PARAM_REGISTRY = [
         "default": 256,
     },
     {
+        "key": "read_ahead_kb",
+        "description": "Block device read-ahead in KB",
+        "type": "sysfs",
+        "sysfs": "/sys/block/{dev}/queue/read_ahead_kb",
+        "default": 128,
+    },
+    {
         "key": "tcp_slow_start_after_idle",
         "description": "TCP slow start after idle",
         "type": "sysctl",

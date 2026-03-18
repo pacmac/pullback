@@ -308,6 +308,7 @@ _DISK_SWEEP_ORDER = [
     "scheduler",
     "nr_requests",
     "max_sectors_kb",
+    "read_ahead_kb",
 ]
 
 
