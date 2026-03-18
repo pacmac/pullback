@@ -50,7 +50,7 @@ tuning:
   # max_sectors_kb: 512
 
 autotune:
-  dd_size_mb: 2048  # dd test file size for write layer
+  dd_size_mb: 512  # dd test file size for write layer
   disk:
     bdi_max_bytes: [41943040, 62914560, 83886080, 104857600, 125829120]
     dirty_ratio_pairs: [[1,1], [2,1], [3,1], [5,2], [10,3]]

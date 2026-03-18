@@ -97,7 +97,7 @@ PARAM_REGISTRY = [
         "description": "I/O queue depth",
         "type": "sysfs",
         "sysfs": "/sys/block/{dev}/queue/nr_requests",
-        "default": 2,
+        "default": 1,
     },
     {
         "key": "max_sectors_kb",
