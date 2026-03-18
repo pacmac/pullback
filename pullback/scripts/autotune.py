@@ -349,11 +349,25 @@ def measure_network_tmpfs(seconds: int, source_host: str = "proxmox.home") -> di
     return _net_result(samples)
 
 
+def _iperf3_reachable(server: str, port: int) -> bool:
+    """Quick check if iperf3 server is reachable (3s connect test)."""
+    try:
+        r = subprocess.run(
+            f"iperf3 -c {server} -p {port} -t 1 -R",
+            shell=True, capture_output=True, timeout=5,
+        )
+        return r.returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+
+
 def _measure_network(seconds: int) -> dict:
     """Pick best available network measurement: iperf3 > rsync-to-tmpfs."""
-    if shutil.which("iperf3"):
+    if shutil.which("iperf3") and _iperf3_reachable(_config["iperf_server"], _config["iperf_port"]):
         return measure_network_iperf3(seconds, _config["iperf_server"], _config["iperf_port"])
     else:
+        if shutil.which("iperf3"):
+            log_warn("    iperf3 server unreachable, falling back to rsync-to-tmpfs")
         return measure_network_tmpfs(seconds, _config["source_host"])
 
 
@@ -450,9 +464,10 @@ def test_param(param: Param, dev: str, sample_secs: int, dry_run: bool = False) 
     new_val = run(read_cmd)
     log(f"    Value now: {new_val}")
 
-    # Settle
-    log(f"    Settling (30s)...")
-    time.sleep(30)
+    # Settle — network changes are instant, others need time
+    settle = 3 if is_network else 30
+    log(f"    Settling ({settle}s)...")
+    time.sleep(settle)
 
     # Measure after
     log_info(f"    Measuring after ({sample_secs}s)...")
