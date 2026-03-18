@@ -156,13 +156,24 @@ PARAMS = [
 # Each param has a range of values to test. Best value kept, then next param.
 
 WRITE_PARAMS = [
+    # Order: BDI first (foundation), then dirty ratios, then flush timing, scheduler last
     {
-        "name": "scheduler",
-        "description": "I/O scheduler",
-        "values": ["mq-deadline", "bfq"],
-        "default": "none",
-        "apply": lambda v, dev: run(f"echo {v} > /sys/block/{dev}/queue/scheduler"),
-        "read": lambda dev: run(f"cat /sys/block/{dev}/queue/scheduler"),
+        "name": "bdi_max_bytes",
+        "description": "Per-device dirty page cap (BDI strict_limit + max_bytes)",
+        "values": [
+            41943040,   # 40 MB
+            62914560,   # 60 MB
+            83886080,   # 80 MB
+            104857600,  # 100 MB
+            125829120,  # 120 MB
+        ],
+        "default": 0,  # off
+        "apply": lambda v, dev: (
+            run(f"echo 1 > /sys/block/{dev}/bdi/strict_limit") if v > 0
+            else run(f"echo 0 > /sys/block/{dev}/bdi/strict_limit"),
+            run(f"echo {v} > /sys/block/{dev}/bdi/max_bytes"),
+        ),
+        "read": lambda dev: int(run(f"cat /sys/block/{dev}/bdi/max_bytes")),
         "drive_type": "hdd",
     },
     {
@@ -199,22 +210,12 @@ WRITE_PARAMS = [
         "read": lambda dev: int(run("sysctl -n vm.dirty_writeback_centisecs")),
     },
     {
-        "name": "bdi_max_bytes",
-        "description": "Per-device dirty page cap (BDI strict_limit + max_bytes)",
-        "values": [
-            41943040,   # 40 MB
-            62914560,   # 60 MB
-            83886080,   # 80 MB
-            104857600,  # 100 MB
-            125829120,  # 120 MB
-        ],
-        "default": 0,  # off
-        "apply": lambda v, dev: (
-            run(f"echo 1 > /sys/block/{dev}/bdi/strict_limit") if v > 0
-            else run(f"echo 0 > /sys/block/{dev}/bdi/strict_limit"),
-            run(f"echo {v} > /sys/block/{dev}/bdi/max_bytes"),
-        ),
-        "read": lambda dev: int(run(f"cat /sys/block/{dev}/bdi/max_bytes")),
+        "name": "scheduler",
+        "description": "I/O scheduler",
+        "values": ["mq-deadline", "bfq"],
+        "default": "none",
+        "apply": lambda v, dev: run(f"echo {v} > /sys/block/{dev}/queue/scheduler"),
+        "read": lambda dev: run(f"cat /sys/block/{dev}/queue/scheduler"),
         "drive_type": "hdd",
     },
 ]
