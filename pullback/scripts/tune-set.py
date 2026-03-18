@@ -35,6 +35,7 @@ def main():
 
         print()
         print("  0. Exit")
+        print("  a. Set ALL to defaults")
         print()
 
         # Prompt for selection
@@ -46,6 +47,11 @@ def main():
 
         if choice == "0" or choice == "":
             break
+
+        if choice.lower() == "a":
+            applied = tuning.apply_defaults(mount_point)
+            print(f"  Reset {len(applied)} params to defaults")
+            continue
 
         try:
             idx = int(choice) - 1
