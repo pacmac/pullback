@@ -301,10 +301,10 @@ def cmd_tune_capture(args):
 # Each entry maps a config key to how it applies. dirty_ratio_pairs
 # is special (applies two params at once).
 _DISK_SWEEP_ORDER = [
-    "bdi_max_bytes",
     "dirty_ratio_pairs",
     "dirty_expire_centisecs",
     "dirty_writeback_centisecs",
+    "bdi_max_bytes",
     "scheduler",
     "nr_requests",
     "max_sectors_kb",
