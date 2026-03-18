@@ -293,68 +293,42 @@ def cmd_tune_capture(args):
     _log_ok(f"Defaults captured to {output}")
 
 
-# ── Autotune sweep definitions ───────────────────────────
-# Order: BDI first, dirty ratios, flush timing, scheduler last.
+# ── Autotune ─────────────────────────────────────────────
+# All sweep ranges come from cfg["autotune"]["disk"|"network"|"rsync"].
+# Apply/revert uses tuning.apply_values(). No hardcoded values.
 
-_WRITE_SWEEP = [
-    {
-        "name": "bdi_max_bytes",
-        "description": "Per-device dirty page cap",
-        "values": [41943040, 62914560, 83886080, 104857600, 125829120],
-        "default": 0,
-        "apply": lambda v, dev: (
-            _run(f"echo 1 > /sys/block/{dev}/bdi/strict_limit") if v > 0
-            else _run(f"echo 0 > /sys/block/{dev}/bdi/strict_limit"),
-            _run(f"echo {v} > /sys/block/{dev}/bdi/max_bytes"),
-        ),
-        "drive_type": "hdd",
-    },
-    {
-        "name": "dirty_ratio/bg_ratio",
-        "description": "Dirty page ratio pair",
-        "values": [(5, 2), (10, 3), (15, 5), (20, 5)],
-        "default": (20, 10),
-        "apply": lambda v, dev: _run(
-            f"sysctl -w vm.dirty_ratio={v[0]} vm.dirty_background_ratio={v[1]} > /dev/null"
-        ),
-    },
-    {
-        "name": "dirty_expire_centisecs",
-        "description": "Age before dirty pages eligible for writeback",
-        "values": [500, 1000, 1500, 2000],
-        "default": 3000,
-        "apply": lambda v, dev: _run(f"sysctl -w vm.dirty_expire_centisecs={v} > /dev/null"),
-    },
-    {
-        "name": "dirty_writeback_centisecs",
-        "description": "Flusher thread wakeup interval",
-        "values": [100, 200, 300],
-        "default": 500,
-        "apply": lambda v, dev: _run(f"sysctl -w vm.dirty_writeback_centisecs={v} > /dev/null"),
-    },
-    {
-        "name": "scheduler",
-        "description": "I/O scheduler",
-        "values": ["mq-deadline", "bfq"],
-        "default": "none",
-        "apply": lambda v, dev: _run(f"echo {v} > /sys/block/{dev}/queue/scheduler"),
-        "drive_type": "hdd",
-    },
+# Sweep order for disk layer — params tested in this sequence.
+# Each entry maps a config key to how it applies. dirty_ratio_pairs
+# is special (applies two params at once).
+_DISK_SWEEP_ORDER = [
+    "bdi_max_bytes",
+    "dirty_ratio_pairs",
+    "dirty_expire_centisecs",
+    "dirty_writeback_centisecs",
+    "scheduler",
+    "nr_requests",
+    "max_sectors_kb",
 ]
 
 
-def _read_dirty_mb():
-    try:
-        with open("/proc/meminfo") as f:
-            for line in f:
-                if line.startswith("Dirty:"):
-                    return int(line.split()[1]) // 1024
-    except (IOError, ValueError):
-        pass
-    return None
+def _apply_sweep_value(key, val, dev, mount_point, tuning_cfg):
+    """Apply a single sweep value using tuning.apply_values."""
+    if key == "dirty_ratio_pairs":
+        tuning.apply_values({"dirty_ratio": val[0], "dirty_background_ratio": val[1]}, mount_point)
+    else:
+        tuning.apply_values({key: val}, mount_point)
 
 
-def _dd_measure(mount_point):
+def _val_str(val):
+    if isinstance(val, (list, tuple)) and len(val) == 2:
+        return f"ratio={val[0]}/bg={val[1]}"
+    elif isinstance(val, int) and val > 10000:
+        return f"{val // (1024*1024)}MB"
+    return str(val)
+
+
+def _dd_measure(mount_point, dd_size_mb=2048):
+    """Run dd, return {disk_avg, dirty_avg, dirty_max}."""
     test_file = f"{mount_point}/.autotune_write_test"
     try:
         os.remove(test_file)
@@ -362,15 +336,15 @@ def _dd_measure(mount_point):
         pass
 
     dd_proc = subprocess.Popen(
-        f"dd if=/dev/zero of={test_file} bs=1M count=2048 conv=fdatasync",
+        f"dd if=/dev/zero of={test_file} bs=1M count={dd_size_mb} conv=fdatasync",
         shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
     )
 
     dirty_samples = []
     while dd_proc.poll() is None:
-        d = _read_dirty_mb()
+        d = tuning._read_meminfo("Dirty")
         if d is not None:
-            dirty_samples.append(d)
+            dirty_samples.append(d // 1024)  # KB to MB
         time.sleep(1)
 
     dd_stderr = dd_proc.stderr.read()
@@ -391,18 +365,15 @@ def _dd_measure(mount_point):
     return result
 
 
-def _val_str(val):
-    if isinstance(val, tuple):
-        return f"ratio={val[0]}/bg={val[1]}"
-    elif isinstance(val, int) and val > 10000:
-        return f"{val // (1024*1024)}MB"
-    return str(val)
-
-
 def cmd_tune_autotune(args):
     _require_root()
     cfg = load_config(args.config)
     mount_point = cfg.get("mount_point", "/backup")
+    autotune_cfg = cfg.get("autotune", {})
+    tuning_cfg = cfg.get("tuning", {})
+    dd_size = autotune_cfg.get("dd_size_mb", 2048)
+
+    layer = getattr(args, "layer", "disk")
 
     dev = tuning.block_device(mount_point)
     if not dev:
@@ -413,43 +384,73 @@ def cmd_tune_autotune(args):
     drive_type = "hdd" if rot == "1" else "ssd"
     _log_info(f"Block device: {dev} ({drive_type})")
 
-    params = [p for p in _WRITE_SWEEP if p.get("drive_type", "both") in (drive_type, "both")]
-    total = sum(len(p["values"]) for p in params)
-    _log_info(f"╔══ AUTOTUNE: {len(params)} params, {total} values ══╗")
+    # Get sweep ranges from config
+    layer_ranges = autotune_cfg.get(layer, {})
+    if not layer_ranges:
+        _log_warn(f"No autotune ranges defined for layer '{layer}' in config.yaml")
+        return
+
+    # Build sweep list from config ranges + registry defaults
+    if layer == "disk":
+        sweep_keys = [k for k in _DISK_SWEEP_ORDER if k in layer_ranges]
+    else:
+        sweep_keys = list(layer_ranges.keys())
+
+    sweeps = []
+    for key in sweep_keys:
+        values = layer_ranges[key]
+        # Convert dirty_ratio_pairs lists to tuples
+        if key == "dirty_ratio_pairs":
+            values = [tuple(v) for v in values]
+
+        # Get default from registry
+        p = tuning.get_param(key)
+        if p:
+            default = p["default"]
+        elif key == "dirty_ratio_pairs":
+            default = (20, 10)
+        else:
+            default = None
+
+        desc = p["description"] if p else key
+        sweeps.append({"key": key, "description": desc, "values": values, "default": default})
+
+    total = sum(len(s["values"]) for s in sweeps)
+    _log_info(f"╔══ AUTOTUNE {layer.upper()}: {len(sweeps)} params, {total} values ══╗")
 
     if getattr(args, "dry_run", False):
-        for p in params:
-            _log(f"  {p['name']}: {[_val_str(v) for v in p['values']]} (default={_val_str(p['default'])})")
+        for s in sweeps:
+            _log(f"  {s['key']}: {[_val_str(v) for v in s['values']]} (default={_val_str(s['default'])})")
         _log_info("╚══ DRY RUN ══╝")
         return
 
-    # Reset all
-    _log_info("Resetting all write params to defaults...")
-    for p in params:
-        p["apply"](p["default"], dev)
+    # Reset all sweep params to defaults
+    _log_info("Resetting sweep params to defaults...")
+    for s in sweeps:
+        _apply_sweep_value(s["key"], s["default"], dev, mount_point, tuning_cfg)
     _log_ok("All defaults applied")
     print()
 
     # Baseline
     _log_info("━━━ Baseline ━━━")
-    bl = _dd_measure(mount_point)
+    bl = _dd_measure(mount_point, dd_size)
     current_speed = bl.get("disk_avg", 0)
     _log(f"    {current_speed} MB/s, dirty avg={bl.get('dirty_avg','?')} max={bl.get('dirty_max','?')}")
     print()
 
     results = []
-    for p in params:
-        name = p["name"]
-        _log_info(f"━━━ Sweeping: {name} ━━━")
-        _log(f"    {p['description']}")
+    for s in sweeps:
+        key = s["key"]
+        _log_info(f"━━━ Sweeping: {key} ━━━")
+        _log(f"    {s['description']}")
 
         best_speed = current_speed
-        best_value = p["default"]
+        best_value = s["default"]
         best_da = best_dm = None
 
-        for val in p["values"]:
-            p["apply"](val, dev)
-            m = _dd_measure(mount_point)
+        for val in s["values"]:
+            _apply_sweep_value(key, val, dev, mount_point, tuning_cfg)
+            m = _dd_measure(mount_point, dd_size)
             spd = m.get("disk_avg", 0)
             da = m.get("dirty_avg", "?")
             dm = m.get("dirty_max", "?")
@@ -462,20 +463,21 @@ def cmd_tune_autotune(args):
                 marker = f" {GREEN}◀ best{RESET}"
             _log(f"    {_val_str(val):>20} → {spd:>4} MB/s  dirty avg={da} max={dm}{marker}")
 
-        p["apply"](best_value, dev)
-        if best_value != p["default"]:
+        _apply_sweep_value(key, best_value, dev, mount_point, tuning_cfg)
+        if best_value != s["default"]:
             _log_ok(f"    ✓ BEST: {_val_str(best_value)} ({best_speed} MB/s)")
         else:
             _log_warn(f"    ✗ DEFAULT kept ({best_speed} MB/s)")
 
         current_speed = best_speed
-        results.append({"name": name, "best": _val_str(best_value), "speed": best_speed,
-                        "dirty_max": best_dm, "kept": best_value != p["default"]})
+        results.append({"key": key, "best_value": best_value, "best_str": _val_str(best_value),
+                        "speed": best_speed, "dirty_max": best_dm,
+                        "kept": best_value != s["default"]})
         print()
 
-    # Final
+    # Final confirmation
     _log_info("━━━ Final confirmation ━━━")
-    f = _dd_measure(mount_point)
+    f = _dd_measure(mount_point, dd_size)
     _log_ok(f"    FINAL: {f.get('disk_avg','?')} MB/s, dirty avg={f.get('dirty_avg','?')} max={f.get('dirty_max','?')} MB")
     dm = f.get("dirty_max")
     if isinstance(dm, int) and dm < 80:
@@ -483,40 +485,33 @@ def cmd_tune_autotune(args):
     elif isinstance(dm, int):
         _log_warn(f"    ✗ dirty max {dm} MB >= 80 MB target")
 
+    # Results table
     print()
     _log_info("═══ RESULTS ═══")
     print(f"  {'Param':<30} {'Best':<20} {'Speed':>8} {'Dirty':>10} {'Kept':<6}")
     print(f"  {'─'*30} {'─'*20} {'─'*8} {'─'*10} {'─'*6}")
     for r in results:
         c = GREEN if r["kept"] else YELLOW
-        print(f"  {r['name']:<30} {r['best']:<20} {r['speed']:>7} {r['dirty_max'] or '?':>10} {c}{'yes' if r['kept'] else 'no':<6}{RESET}")
+        print(f"  {r['key']:<30} {r['best_str']:<20} {r['speed']:>7} {r['dirty_max'] or '?':>10} {c}{'yes' if r['kept'] else 'no':<6}{RESET}")
 
-    # Output changed params as YAML (copy-paste into config.yaml or .pullback-tune.yaml)
+    # Changed params as YAML
     changed = [r for r in results if r["kept"]]
     if changed:
         print()
         _log_info("═══ CHANGED (YAML) ═══")
         print("tuning:")
         for r in changed:
-            # Map sweep names back to config keys
-            name = r["name"]
-            best = r["best"]
-            if name == "dirty_ratio/bg_ratio":
-                # Parse "ratio=5/bg=2"
-                m = re.match(r"ratio=(\d+)/bg=(\d+)", best)
-                if m:
-                    print(f"  dirty_ratio: {m.group(1)}")
-                    print(f"  dirty_background_ratio: {m.group(2)}")
-            elif "MB" in best:
-                # BDI — convert back to bytes
-                mb = int(best.replace("MB", ""))
-                print(f"  bdi_max_bytes: {mb * 1024 * 1024}")
+            key = r["key"]
+            val = r["best_value"]
+            if key == "dirty_ratio_pairs":
+                print(f"  dirty_ratio: {val[0]}")
+                print(f"  dirty_background_ratio: {val[1]}")
             else:
-                print(f"  {name}: {best}")
+                print(f"  {key}: {val}")
 
     print()
     _log_info("═══ FULL STATUS ═══")
-    print(tuning.status_yaml())
+    print(tuning.status_yaml(mount_point, tuning_cfg))
 
 
 # ── config command ───────────────────────────────────────
@@ -563,7 +558,10 @@ def main():
     tune_sub.add_parser("install", help="Persist tuning to sysctl + systemd")
     tc = tune_sub.add_parser("capture", help="Capture OS defaults to file")
     tc.add_argument("--force", action="store_true")
-    ta = tune_sub.add_parser("autotune", help="Sweep write params")
+    ta = tune_sub.add_parser("autotune", help="Sweep tuning params")
+    ta.add_argument("layer", nargs="?", default="disk",
+                    choices=["disk", "network", "rsync"],
+                    help="Layer to autotune (default: disk)")
     ta.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args()

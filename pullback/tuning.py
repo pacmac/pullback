@@ -68,11 +68,9 @@ PARAM_REGISTRY = [
         "key": "rps_enabled",
         "description": "Receive Packet Steering (distribute NET_RX)",
         "type": "rps",
-        "sysfs_cpus": "/sys/class/net/eth0/queues/rx-0/rps_cpus",
+        "sysfs_cpus": "/sys/class/net/{iface}/queues/rx-0/rps_cpus",
         "sysfs_flow": "/proc/sys/net/core/rps_sock_flow_entries",
         "default": False,
-        "on_value": ("c", "32768"),
-        "off_value": ("0", "0"),
     },
     {
         "key": "eee_off",
@@ -172,9 +170,13 @@ def merge_tuning(cfg_tuning, drive_tuning):
 # ── Read live values ────────────────────────────────────
 
 
-def read_live(mount_point="/backup"):
-    """Read all current tuning values from the system. Returns dict."""
+def read_live(mount_point="/backup", tuning_cfg=None):
+    """Read all current tuning values from the system. Returns dict.
+
+    tuning_cfg provides net_interface and other config-driven values.
+    """
     dev = block_device(mount_point)
+    iface = (tuning_cfg or {}).get("net_interface", "eth0")
     values = {}
 
     for p in PARAM_REGISTRY:
@@ -186,7 +188,6 @@ def read_live(mount_point="/backup"):
         elif ptype == "sysfs":
             path = p["sysfs"].replace("{dev}", dev or "sda")
             raw = _read_sysfs(path)
-            # Parse scheduler format: "none [mq-deadline] kyber bfq" → "mq-deadline"
             if key == "scheduler" and raw and "[" in raw:
                 import re
                 m = re.search(r"\[(\S+)\]", raw)
@@ -196,7 +197,6 @@ def read_live(mount_point="/backup"):
             if dev:
                 strict = _read_sysfs(p["sysfs_strict"].replace("{dev}", dev))
                 max_b = _read_sysfs(p["sysfs_max"].replace("{dev}", dev))
-                # Only report max_bytes if strict_limit is on
                 if strict == "1" or strict == 1:
                     values[key] = int(max_b) if max_b else 0
                 else:
@@ -204,10 +204,11 @@ def read_live(mount_point="/backup"):
             else:
                 values[key] = 0
         elif ptype == "rps":
-            cpus = _read_sysfs(p["sysfs_cpus"])
+            cpus_path = p["sysfs_cpus"].replace("{iface}", iface)
+            cpus = _read_sysfs(cpus_path)
             values[key] = cpus not in ("0", "00000000", "0000", None)
         elif ptype == "eee":
-            values[key] = _eee_is_off()
+            values[key] = _eee_is_off(iface)
         elif ptype == "governor":
             gov_path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"
             values[key] = _read_sysfs(gov_path)
@@ -234,8 +235,14 @@ def apply_tuning(mount_point, cfg):
 
 
 def apply_values(tuning, mount_point="/backup"):
-    """Apply a tuning dict to the system. Returns list of applied descriptions."""
+    """Apply a tuning dict to the system. Returns list of applied descriptions.
+
+    Reads net_interface, rps_cpus, rps_flow_entries from the tuning dict.
+    """
     dev = block_device(mount_point)
+    iface = tuning.get("net_interface", "eth0")
+    rps_cpus = tuning.get("rps_cpus", "c")
+    rps_flow = str(tuning.get("rps_flow_entries", 32768))
     applied = []
 
     for p in PARAM_REGISTRY:
@@ -268,23 +275,23 @@ def apply_values(tuning, mount_point="/backup"):
                 applied.append(f"BDI off on {dev}")
 
         elif ptype == "rps":
-            on = p["on_value"]
-            off = p["off_value"]
+            cpus_path = p["sysfs_cpus"].replace("{iface}", iface)
+            flow_path = p["sysfs_flow"]
             if val:
-                _write_sysfs(p["sysfs_cpus"], on[0])
-                _write_sysfs(p["sysfs_flow"], on[1])
-                applied.append("RPS=CPU2+3")
+                _write_sysfs(cpus_path, rps_cpus)
+                _write_sysfs(flow_path, rps_flow)
+                applied.append(f"RPS={rps_cpus}")
             else:
-                _write_sysfs(p["sysfs_cpus"], off[0])
-                _write_sysfs(p["sysfs_flow"], off[1])
+                _write_sysfs(cpus_path, "0")
+                _write_sysfs(flow_path, "0")
                 applied.append("RPS=off")
 
         elif ptype == "eee":
             if val:
-                _ethtool_eee("off")
+                _ethtool_eee("off", iface)
                 applied.append("EEE=off")
             else:
-                _ethtool_eee("on")
+                _ethtool_eee("on", iface)
                 applied.append("EEE=on")
 
         elif ptype == "governor":
@@ -306,10 +313,10 @@ def apply_defaults(mount_point="/backup"):
 # ── Status report ───────────────────────────────────────
 
 
-def status_report(mount_point="/backup"):
+def status_report(mount_point="/backup", tuning_cfg=None):
     """Return a formatted status string of all tuning params."""
     dev = block_device(mount_point) or "sda"
-    live = read_live(mount_point)
+    live = read_live(mount_point, tuning_cfg)
 
     lines = []
     lines.append("=== Tuning Status ===")
@@ -320,7 +327,6 @@ def status_report(mount_point="/backup"):
         marker = "" if str(val) == str(default) else " *"
         lines.append(f"  {key:<30} = {val}{marker}")
 
-    # Live dirty/writeback
     dirty_kb = _read_meminfo("Dirty")
     wb_kb = _read_meminfo("Writeback")
     lines.append("")
@@ -331,16 +337,15 @@ def status_report(mount_point="/backup"):
     return "\n".join(lines)
 
 
-def status_yaml(mount_point="/backup"):
+def status_yaml(mount_point="/backup", tuning_cfg=None):
     """Return current live values as YAML (config.yaml tuning format)."""
-    live = read_live(mount_point)
+    live = read_live(mount_point, tuning_cfg)
     lines = ["tuning:"]
     for p in PARAM_REGISTRY:
         key = p["key"]
         val = live.get(key)
         if val is None:
             val = p["default"]
-        # Format booleans as yaml
         if isinstance(val, bool):
             val = "true" if val else "false"
         lines.append(f"  {key}: {val}")
@@ -374,15 +379,19 @@ def generate_boot_script(tuning):
     ]
 
     # RPS
+    iface = tuning.get("net_interface", "eth0")
+    rps_cpus = tuning.get("rps_cpus", "c")
+    rps_flow = tuning.get("rps_flow_entries", 32768)
+
     if tuning.get("rps_enabled"):
         lines.extend([
             "# RPS: distribute network softirqs",
-            "if [[ -f /sys/class/net/eth0/queues/rx-0/rps_cpus ]]; then",
-            "    echo c > /sys/class/net/eth0/queues/rx-0/rps_cpus",
-            '    log "RPS enabled on CPU2+3"',
+            f"if [[ -f /sys/class/net/{iface}/queues/rx-0/rps_cpus ]]; then",
+            f"    echo {rps_cpus} > /sys/class/net/{iface}/queues/rx-0/rps_cpus",
+            f'    log "RPS enabled (cpus={rps_cpus})"',
             "fi",
             "if [[ -f /proc/sys/net/core/rps_sock_flow_entries ]]; then",
-            "    echo 32768 > /proc/sys/net/core/rps_sock_flow_entries",
+            f"    echo {rps_flow} > /proc/sys/net/core/rps_sock_flow_entries",
             '    log "RPS flow entries set"',
             "fi",
         ])
@@ -392,7 +401,7 @@ def generate_boot_script(tuning):
         lines.extend([
             "# Disable EEE (Energy Efficient Ethernet)",
             "if command -v ethtool &>/dev/null; then",
-            "    ethtool --set-eee eth0 eee off 2>/dev/null && \\",
+            f"    ethtool --set-eee {iface} eee off 2>/dev/null && \\",
             '        log "EEE disabled" || \\',
             '        log "EEE not supported (ok)"',
             "fi",
@@ -517,22 +526,22 @@ def _sysctl_get(key):
         return None
 
 
-def _ethtool_eee(state):
+def _ethtool_eee(state, iface="eth0"):
     """Set EEE on or off."""
     try:
         subprocess.run(
-            ["ethtool", "--set-eee", "eth0", "eee", state],
+            ["ethtool", "--set-eee", iface, "eee", state],
             capture_output=True, timeout=5,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
 
 
-def _eee_is_off():
+def _eee_is_off(iface="eth0"):
     """Check if EEE is disabled."""
     try:
         r = subprocess.run(
-            ["ethtool", "--show-eee", "eth0"],
+            ["ethtool", "--show-eee", iface],
             capture_output=True, text=True, timeout=5,
         )
         return "disabled" in r.stdout.lower()
