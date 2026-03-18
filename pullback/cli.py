@@ -490,7 +490,32 @@ def cmd_tune_autotune(args):
     for r in results:
         c = GREEN if r["kept"] else YELLOW
         print(f"  {r['name']:<30} {r['best']:<20} {r['speed']:>7} {r['dirty_max'] or '?':>10} {c}{'yes' if r['kept'] else 'no':<6}{RESET}")
+
+    # Output changed params as YAML (copy-paste into config.yaml or .pullback-tune.yaml)
+    changed = [r for r in results if r["kept"]]
+    if changed:
+        print()
+        _log_info("═══ CHANGED (YAML) ═══")
+        print("tuning:")
+        for r in changed:
+            # Map sweep names back to config keys
+            name = r["name"]
+            best = r["best"]
+            if name == "dirty_ratio/bg_ratio":
+                # Parse "ratio=5/bg=2"
+                m = re.match(r"ratio=(\d+)/bg=(\d+)", best)
+                if m:
+                    print(f"  dirty_ratio: {m.group(1)}")
+                    print(f"  dirty_background_ratio: {m.group(2)}")
+            elif "MB" in best:
+                # BDI — convert back to bytes
+                mb = int(best.replace("MB", ""))
+                print(f"  bdi_max_bytes: {mb * 1024 * 1024}")
+            else:
+                print(f"  {name}: {best}")
+
     print()
+    _log_info("═══ FULL STATUS ═══")
     print(tuning.status_yaml())
 
 
