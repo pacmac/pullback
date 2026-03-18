@@ -1,6 +1,7 @@
 """Orchestrator: iterate sources → folders, run sync pipeline."""
 
 import argparse
+import fcntl
 import logging
 import os
 import sys
@@ -232,6 +233,9 @@ def run_source(source_name, source_cfg, cfg):
     return all_ok
 
 
+_LOCK_FILE = Path(__file__).parent / "state" / "engine.lock"
+
+
 def run_all(cfg, source_filter=None, folder_filter=None):
     """Run sync for all sources (or filtered subset).
 
@@ -240,6 +244,27 @@ def run_all(cfg, source_filter=None, folder_filter=None):
         source_filter: if set, only run this source name
         folder_filter: if set, only run this folder path (requires source_filter)
     """
+    # Prevent concurrent syncs — skip if already running
+    _LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lock_fp = open(_LOCK_FILE, "w")
+    try:
+        fcntl.flock(lock_fp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        log.info("Sync already in progress, skipping")
+        lock_fp.close()
+        return True  # not an error — just already running
+    lock_fp.write(str(os.getpid()))
+    lock_fp.flush()
+
+    try:
+        return _run_all_locked(cfg, source_filter, folder_filter)
+    finally:
+        fcntl.flock(lock_fp, fcntl.LOCK_UN)
+        lock_fp.close()
+
+
+def _run_all_locked(cfg, source_filter=None, folder_filter=None):
+    """Inner run_all — called while holding the lock."""
     # Verify backup volume is mounted
     flag = Path(cfg["mount_point"]) / cfg["usb"]["flag_file"]
     if not flag.exists():
