@@ -141,8 +141,31 @@ def cmd_tune_apply(args):
 
 def cmd_tune_defaults(args):
     _require_root()
+
+    # Reset live values
     applied = tuning.apply_defaults()
     _log_ok(f"Reset {len(applied)} params to OS defaults")
+
+    # Remove persisted tuning so defaults survive reboot
+    sysctl_conf = Path("/etc/sysctl.d/99-pullback.conf")
+    service_name = "pullback-tune"
+    service_dst = Path(f"/etc/systemd/system/{service_name}.service")
+    boot_script = PROJECT_DIR / "scripts" / "pi-tune-boot.sh"
+
+    if sysctl_conf.exists():
+        sysctl_conf.unlink()
+        _log_ok(f"Removed {sysctl_conf}")
+
+    if service_dst.exists():
+        subprocess.run(["systemctl", "disable", service_name], capture_output=True, timeout=10)
+        service_dst.unlink()
+        subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=10)
+        _log_ok(f"Disabled and removed {service_dst}")
+
+    if boot_script.exists():
+        boot_script.unlink()
+        _log_ok(f"Removed {boot_script}")
+
     print(tuning.status_yaml())
 
 
