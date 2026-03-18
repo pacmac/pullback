@@ -77,23 +77,23 @@ def log_err(msg):
 
 @dataclass
 class Param:
+    """Network/rsync layer param — single value test."""
     name: str
-    layer: str  # network, cpu, disk, dirty
+    layer: str
     description: str
-    apply_cmd: str  # shell command to apply the test value
-    revert_cmd: str  # shell command to revert to default
-    read_cmd: str  # shell command to read current value
-    test_values: list = field(default_factory=list)  # for sweep
-    drive_type: str = "both"  # hdd, ssd, both
+    apply_cmd: str
+    revert_cmd: str
+    read_cmd: str
+    test_values: list = field(default_factory=list)
+    drive_type: str = "both"
     requires_sync: bool = False
-    metric: str = "net_avg"  # primary metric to judge improvement
-    threshold_pct: float = 5.0  # minimum % improvement to keep
+    metric: str = "net_avg"
+    threshold_pct: float = 5.0
 
 
-# Block device is detected at runtime — these use {dev} placeholder
+# Network and rsync layer params (single-value test)
 PARAMS = [
-    # ── Layer 1: Network (pure TCP, no disk interaction) ──
-    # Confirmed default-ok at gigabit (117 MB/s to tmpfs, 2026-03-18)
+    # ── Layer 1: Network ──
     Param(
         name="tcp_slow_start_off",
         layer="network",
@@ -121,91 +121,102 @@ PARAMS = [
         read_cmd="sysctl -n net.core.netdev_max_backlog",
         metric="net_avg",
     ),
-    # ── Layer 2: Write speed (disk-only params) ──
-    # Uses dd to test raw write speed. Only params that affect the
-    # kernel's disk write path — no network params here.
-    Param(
-        name="scheduler_mq_deadline",
-        layer="write",
-        description="I/O scheduler: mq-deadline (deadline guarantees for rotational)",
-        apply_cmd="echo mq-deadline > /sys/block/{dev}/queue/scheduler",
-        revert_cmd="echo none > /sys/block/{dev}/queue/scheduler",
-        read_cmd="cat /sys/block/{dev}/queue/scheduler",
-        metric="disk_avg",
-        drive_type="hdd",
-    ),
-    Param(
-        name="dirty_ratio_5",
-        layer="write",
-        description="dirty_ratio=5, background=2 (force earlier flushes)",
-        apply_cmd="sysctl -w vm.dirty_ratio=5 vm.dirty_background_ratio=2 > /dev/null",
-        revert_cmd="sysctl -w vm.dirty_ratio=20 vm.dirty_background_ratio=10 > /dev/null",
-        read_cmd="sysctl -n vm.dirty_ratio",
-        metric="disk_avg",
-    ),
-    Param(
-        name="dirty_expire_1000",
-        layer="write",
-        description="dirty_expire_centisecs=1000 (flush stale pages sooner)",
-        apply_cmd="sysctl -w vm.dirty_expire_centisecs=1000 > /dev/null",
-        revert_cmd="sysctl -w vm.dirty_expire_centisecs=3000 > /dev/null",
-        read_cmd="sysctl -n vm.dirty_expire_centisecs",
-        metric="disk_avg",
-    ),
-    Param(
-        name="bdi_80m",
-        layer="write",
-        description="BDI strict_limit=1 + max_bytes=80MB (per-device dirty cap)",
-        apply_cmd="echo 1 > /sys/block/{dev}/bdi/strict_limit && echo 83886080 > /sys/block/{dev}/bdi/max_bytes",
-        revert_cmd="echo 0 > /sys/block/{dev}/bdi/strict_limit && echo 0 > /sys/block/{dev}/bdi/max_bytes",
-        read_cmd="cat /sys/block/{dev}/bdi/max_bytes",
-        metric="disk_avg",
-        drive_type="hdd",
-    ),
-    # ── Layer 3: rsync optimisation (end-to-end transfer) ──
-    # Needs active sync. Tests params that affect the full transfer
-    # pipeline: network receive + CPU + disk write combined.
+    # ── Layer 3: rsync ──
     Param(
         name="rps_cpus_0xc",
         layer="rsync",
-        description="RPS distribute NET_RX to CPU2+3 (relieves CPU0 under combined load)",
+        description="RPS distribute NET_RX to CPU2+3",
         apply_cmd="echo c > /sys/class/net/eth0/queues/rx-0/rps_cpus && echo 32768 > /proc/sys/net/core/rps_sock_flow_entries",
         revert_cmd="echo 0 > /sys/class/net/eth0/queues/rx-0/rps_cpus && echo 0 > /proc/sys/net/core/rps_sock_flow_entries",
         read_cmd="cat /sys/class/net/eth0/queues/rx-0/rps_cpus",
-        requires_sync=True,
-        metric="net_avg",
+        requires_sync=True, metric="net_avg",
     ),
     Param(
         name="eee_off",
         layer="rsync",
-        description="Disable EEE (bcmgenet bug causes packet drops under sustained load)",
+        description="Disable EEE (bcmgenet packet drop bug)",
         apply_cmd="ethtool --set-eee eth0 eee off 2>/dev/null",
         revert_cmd="ethtool --set-eee eth0 eee on 2>/dev/null",
         read_cmd="ethtool --show-eee eth0 2>/dev/null | grep -i 'eee status' | awk -F: '{print $2}' | xargs",
-        requires_sync=True,
-        metric="net_avg",
+        requires_sync=True, metric="net_avg",
     ),
     Param(
         name="governor_performance",
         layer="rsync",
-        description="CPU governor: performance (max clock, no scaling latency)",
+        description="CPU governor: performance",
         apply_cmd="echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor > /dev/null",
         revert_cmd="echo ondemand | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor > /dev/null",
         read_cmd="cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",
-        requires_sync=True,
-        metric="net_avg",
-        drive_type="hdd",
+        requires_sync=True, metric="net_avg", drive_type="hdd",
     ),
-    Param(
-        name="cipher_aes128_ctr",
-        layer="rsync",
-        description="SSH cipher aes128-ctr (faster in software on Pi, no AES-NI)",
-        apply_cmd="true",  # applied via config, not sysctl — placeholder
-        revert_cmd="true",
-        read_cmd="echo 'requires config change'",
-        requires_sync=True,
-        metric="net_avg",
-    ),
+]
+
+
+# ── Layer 2: Write speed sweep definitions ───────────────
+# Each param has a range of values to test. Best value kept, then next param.
+
+WRITE_PARAMS = [
+    {
+        "name": "scheduler",
+        "description": "I/O scheduler",
+        "values": ["mq-deadline", "bfq"],
+        "default": "none",
+        "apply": lambda v, dev: run(f"echo {v} > /sys/block/{dev}/queue/scheduler"),
+        "read": lambda dev: run(f"cat /sys/block/{dev}/queue/scheduler"),
+        "drive_type": "hdd",
+    },
+    {
+        "name": "dirty_ratio/bg_ratio",
+        "description": "Dirty page ratio pair (ratio, background_ratio)",
+        "values": [(2, 5), (3, 10), (5, 15), (5, 20)],
+        "default": (20, 10),
+        "apply": lambda v, dev: run(
+            f"sysctl -w vm.dirty_ratio={v[0]} vm.dirty_background_ratio={v[1]} > /dev/null"
+        ),
+        "read": lambda dev: (
+            int(run("sysctl -n vm.dirty_ratio")),
+            int(run("sysctl -n vm.dirty_background_ratio")),
+        ),
+    },
+    {
+        "name": "dirty_expire_centisecs",
+        "description": "How long before dirty pages are eligible for writeback",
+        "values": [500, 1000, 1500, 2000],
+        "default": 3000,
+        "apply": lambda v, dev: run(
+            f"sysctl -w vm.dirty_expire_centisecs={v} > /dev/null"
+        ),
+        "read": lambda dev: int(run("sysctl -n vm.dirty_expire_centisecs")),
+    },
+    {
+        "name": "dirty_writeback_centisecs",
+        "description": "Flusher thread wakeup interval",
+        "values": [100, 200, 300],
+        "default": 500,
+        "apply": lambda v, dev: run(
+            f"sysctl -w vm.dirty_writeback_centisecs={v} > /dev/null"
+        ),
+        "read": lambda dev: int(run("sysctl -n vm.dirty_writeback_centisecs")),
+    },
+    {
+        "name": "bdi_max_bytes",
+        "description": "Per-device dirty page cap (BDI strict_limit + max_bytes)",
+        "values": [
+            41943040,   # 40 MB
+            62914560,   # 60 MB
+            83886080,   # 80 MB
+            104857600,  # 100 MB
+            125829120,  # 120 MB
+        ],
+        "default": 0,  # off
+        "apply": lambda v, dev: (
+            run(f"echo 1 > /sys/block/{dev}/bdi/strict_limit") if v > 0
+            else run(f"echo 0 > /sys/block/{dev}/bdi/strict_limit"),
+            run(f"echo {v} > /sys/block/{dev}/bdi/max_bytes"),
+        ),
+        "read": lambda dev: int(run(f"cat /sys/block/{dev}/bdi/max_bytes")),
+        "drive_type": "hdd",
+    },
 ]
 
 
@@ -460,11 +471,144 @@ def _get_measure_fn(layer: str):
     elif layer == "write":
         return measure_write_speed
     else:
-        # rsync layer — will need its own measurement (TODO)
         return measure_write_speed
 
 
-# ── Test logic ───────────────────────────────────────────
+# ── Write layer sweep ───────────────────────────────────
+
+
+def run_write_layer(dev: str, drive_type: str, dry_run: bool = False) -> list:
+    """Sweep each write param through its range, keeping best values."""
+    params = [p for p in WRITE_PARAMS if p.get("drive_type", "both") in (drive_type, "both")]
+
+    if not params:
+        log_warn(f"No write params for {drive_type}")
+        return []
+
+    total_tests = sum(len(p["values"]) for p in params)
+    log_info(f"╔══ Layer: WRITE ({len(params)} params, {total_tests} values to test) ══╗")
+
+    if dry_run:
+        for p in params:
+            log(f"  {p['name']}: {p['values']} (default={p['default']})")
+        log_info(f"╚══ DRY RUN ══╝")
+        return []
+
+    # Reset all to defaults
+    log_info("Resetting all write params to defaults...")
+    for p in params:
+        p["apply"](p["default"], dev)
+    log_ok("All defaults applied")
+    print()
+
+    # Baseline measurement
+    log_info("━━━ Baseline (all defaults) ━━━")
+    baseline = measure_write_speed(0)  # seconds param unused, dd is fixed 2GB
+    current_best_speed = baseline.get("disk_avg", 0)
+    log_info(f"    Baseline: {current_best_speed} MB/s")
+    print()
+
+    results = []
+
+    for p in params:
+        name = p["name"]
+        values = p["values"]
+        default = p["default"]
+
+        log_info(f"━━━ Sweeping: {name} ━━━")
+        log(f"    {p['description']}")
+        log(f"    Values: {values}, default: {default}")
+
+        best_speed = current_best_speed
+        best_value = default
+        best_dirty_avg = None
+        best_dirty_max = None
+
+        for val in values:
+            # Apply this value
+            p["apply"](val, dev)
+
+            # Display-friendly value
+            if isinstance(val, tuple):
+                val_str = f"ratio={val[0]}/bg={val[1]}"
+            elif isinstance(val, int) and val > 10000:
+                val_str = f"{val // (1024*1024)}MB"
+            else:
+                val_str = str(val)
+
+            # Measure
+            m = measure_write_speed(0)
+            speed = m.get("disk_avg", 0)
+            dirty_avg = m.get("dirty_avg", "?")
+            dirty_max = m.get("dirty_max", "?")
+
+            marker = ""
+            if speed > best_speed:
+                best_speed = speed
+                best_value = val
+                best_dirty_avg = dirty_avg
+                best_dirty_max = dirty_max
+                marker = " ◀ new best"
+
+            log(f"    {val_str:>20} → {speed:>4} MB/s  dirty avg={dirty_avg} max={dirty_max}{marker}")
+
+        # Apply the winner
+        p["apply"](best_value, dev)
+
+        if best_value != default:
+            if isinstance(best_value, tuple):
+                bv_str = f"ratio={best_value[0]}/bg={best_value[1]}"
+            elif isinstance(best_value, int) and best_value > 10000:
+                bv_str = f"{best_value // (1024*1024)}MB"
+            else:
+                bv_str = str(best_value)
+            log_ok(f"    ✓ BEST: {bv_str} ({best_speed} MB/s)")
+        else:
+            log_warn(f"    ✗ DEFAULT kept ({best_speed} MB/s)")
+
+        current_best_speed = best_speed
+
+        results.append({
+            "name": name,
+            "best_value": str(best_value),
+            "best_speed": best_speed,
+            "dirty_avg": best_dirty_avg,
+            "dirty_max": best_dirty_max,
+            "default": str(default),
+            "kept": best_value != default,
+        })
+        print()
+
+    # Final confirmation
+    log_info("━━━ Final confirmation (all winners applied) ━━━")
+    final = measure_write_speed(0)
+    disk = final.get("disk_avg", "?")
+    dirty_avg = final.get("dirty_avg", "?")
+    dirty_max = final.get("dirty_max", "?")
+    log_ok(f"    FINAL: {disk} MB/s, dirty avg={dirty_avg} max={dirty_max} MB")
+
+    if isinstance(dirty_max, int) and dirty_max < 80:
+        log_ok(f"    ✓ dirty max {dirty_max} MB < 80 MB target")
+    elif isinstance(dirty_max, int):
+        log_warn(f"    ✗ dirty max {dirty_max} MB >= 80 MB target")
+
+    # Print summary
+    print()
+    log_info("═══ WRITE LAYER RESULTS ═══")
+    print(f"  {'Param':<30} {'Best Value':<20} {'Speed':>8} {'Dirty Max':>10} {'Kept':<6}")
+    print(f"  {'─'*30} {'─'*20} {'─'*8} {'─'*10} {'─'*6}")
+    for r in results:
+        colour = GREEN if r["kept"] else YELLOW
+        dm = r["dirty_max"] if r["dirty_max"] is not None else "?"
+        print(f"  {r['name']:<30} {r['best_value']:<20} {r['best_speed']:>7} {dm:>10} {colour}{'yes' if r['kept'] else 'no':<6}{RESET}")
+    print()
+
+    log_info(f"╚══ Layer WRITE done ══╝")
+    print()
+    return results
+
+
+# ── Test logic (network/rsync layers) ────────────────────
 
 
 def test_param(param: Param, dev: str, sample_secs: int, dry_run: bool = False) -> dict:
@@ -697,13 +841,15 @@ def main():
     all_results = []
 
     for layer in layers:
-        results = run_layer(layer, dev, drive_type, args.sample, args.dry_run)
+        if layer == "write":
+            results = run_write_layer(dev, drive_type, args.dry_run)
+        else:
+            results = run_layer(layer, dev, drive_type, args.sample, args.dry_run)
         all_results.extend(results)
 
     # Save results
     if not args.dry_run and all_results:
         _save_results(all_results)
-        _print_summary(all_results)
 
 
 def _save_results(results: list):
