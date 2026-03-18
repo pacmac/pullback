@@ -331,7 +331,9 @@ def status_yaml(mount_point="/backup"):
     lines = ["tuning:"]
     for p in PARAM_REGISTRY:
         key = p["key"]
-        val = live.get(key, p["default"])
+        val = live.get(key)
+        if val is None:
+            val = p["default"]
         # Format booleans as yaml
         if isinstance(val, bool):
             val = "true" if val else "false"
