@@ -394,15 +394,21 @@ def measure_write_speed(seconds: int) -> dict:
     test_file = f"{MOUNT_POINT}/.autotune_write_test"
     dev = detect_block_device() or "sda"
 
+    # Wait for any previous writes to fully flush
+    run("sync", timeout=120)
+    time.sleep(3)
+
     # Start dd with no count limit — runs until killed
+    # No oflag=direct — we WANT to go through the page cache so dirty
+    # page tuning params (dirty_ratio, BDI) are actually exercised.
     dd_proc = subprocess.Popen(
-        f"dd if=/dev/zero of={test_file} bs=1M oflag=direct 2>/dev/null",
+        f"dd if=/dev/zero of={test_file} bs=1M 2>/dev/null",
         shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
 
-    # Warmup — let dd reach steady-state (past initial cache burst)
-    log(f"    dd warmup (10s)...")
-    time.sleep(10)
+    # Warmup — let dd fill the page cache and reach steady-state
+    log(f"    dd warmup (15s)...")
+    time.sleep(15)
 
     if dd_proc.poll() is not None:
         log_err("dd exited during warmup")
@@ -442,11 +448,12 @@ def measure_write_speed(seconds: int) -> dict:
     # Kill dd and clean up
     dd_proc.kill()
     dd_proc.wait()
-    run("sync")  # flush remaining writes
     try:
         os.remove(test_file)
     except OSError:
         pass
+    # Flush remaining writes — can take a while after large dd
+    run("sync", timeout=120)
 
     metrics = {}
     if samples_disk:
