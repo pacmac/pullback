@@ -414,12 +414,16 @@ def _dd_measure(mount_point, dd_size_mb=2048):
         pass
 
     # Wait for dirty pages to flush before starting
-    for _ in range(30):  # max 30 seconds
+    waited = 0
+    for _ in range(60):  # max 60 seconds
         dirty = tuning._read_meminfo("Dirty")
-        if dirty is not None and dirty < 5120:  # < 5 MB
+        if dirty is not None and dirty < 2048:  # < 2 MB
             break
-        subprocess.run(["sync"], timeout=10)
-        time.sleep(1)
+        subprocess.run(["sync"], timeout=30)
+        time.sleep(2)
+        waited += 2
+    if waited > 0:
+        _log(f"    (waited {waited}s for dirty flush)")
 
     dd_proc = subprocess.Popen(
         f"dd if=/dev/zero of={test_file} bs=1M count={dd_size_mb} conv=fdatasync",
