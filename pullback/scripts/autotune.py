@@ -131,7 +131,6 @@ PARAMS = [
         apply_cmd="echo c > /sys/class/net/eth0/queues/rx-0/rps_cpus && echo 32768 > /proc/sys/net/core/rps_sock_flow_entries",
         revert_cmd="echo 0 > /sys/class/net/eth0/queues/rx-0/rps_cpus && echo 0 > /proc/sys/net/core/rps_sock_flow_entries",
         read_cmd="cat /sys/class/net/eth0/queues/rx-0/rps_cpus",
-        requires_sync=True,
         metric="disk_avg",
     ),
     Param(
@@ -141,7 +140,6 @@ PARAMS = [
         apply_cmd="ethtool --set-eee eth0 eee off 2>/dev/null",
         revert_cmd="ethtool --set-eee eth0 eee on 2>/dev/null",
         read_cmd="ethtool --show-eee eth0 2>/dev/null | grep -i 'eee status' | awk -F: '{print $2}' | xargs",
-        requires_sync=True,
         metric="disk_avg",
     ),
     Param(
@@ -151,7 +149,6 @@ PARAMS = [
         apply_cmd="echo performance | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor > /dev/null",
         revert_cmd="echo ondemand | tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor > /dev/null",
         read_cmd="cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",
-        requires_sync=True,
         metric="disk_avg",
         drive_type="hdd",  # no gain measured on SSD
     ),
@@ -162,7 +159,6 @@ PARAMS = [
         apply_cmd="echo mq-deadline > /sys/block/{dev}/queue/scheduler",
         revert_cmd="echo none > /sys/block/{dev}/queue/scheduler",
         read_cmd="cat /sys/block/{dev}/queue/scheduler",
-        requires_sync=True,
         metric="disk_avg",
         drive_type="hdd",
     ),
@@ -173,7 +169,6 @@ PARAMS = [
         apply_cmd="sysctl -w vm.dirty_ratio=5 vm.dirty_background_ratio=2 > /dev/null",
         revert_cmd="sysctl -w vm.dirty_ratio=20 vm.dirty_background_ratio=10 > /dev/null",
         read_cmd="sysctl -n vm.dirty_ratio",
-        requires_sync=True,
         metric="dirty_avg",
     ),
     Param(
@@ -183,7 +178,6 @@ PARAMS = [
         apply_cmd="sysctl -w vm.dirty_expire_centisecs=1000 > /dev/null",
         revert_cmd="sysctl -w vm.dirty_expire_centisecs=3000 > /dev/null",
         read_cmd="sysctl -n vm.dirty_expire_centisecs",
-        requires_sync=True,
         metric="dirty_avg",
     ),
     Param(
@@ -193,7 +187,6 @@ PARAMS = [
         apply_cmd="echo 1 > /sys/block/{dev}/bdi/strict_limit && echo 83886080 > /sys/block/{dev}/bdi/max_bytes",
         revert_cmd="echo 0 > /sys/block/{dev}/bdi/strict_limit && echo 0 > /sys/block/{dev}/bdi/max_bytes",
         read_cmd="cat /sys/block/{dev}/bdi/max_bytes",
-        requires_sync=True,
         metric="dirty_avg",
         drive_type="hdd",
     ),
@@ -386,51 +379,125 @@ def _measure_network(seconds: int) -> dict:
         return measure_network_tmpfs(seconds, _config["source_host"])
 
 
-def measure_bottleneck(seconds: int) -> dict:
-    """Measure using pi-bottleneck.sh. Returns parsed metrics dict."""
-    # Clear old log
-    log_file = STATE_DIR / "bottleneck.log"
-    log_file.write_text("")
+def measure_write_speed(seconds: int) -> dict:
+    """Measure raw disk write speed using dd to the backup volume.
 
-    # Launch bottleneck as a background process (it collects samples in a loop)
-    subprocess.Popen(
-        f"bash {BOTTLENECK} --runsec={seconds} --daemon",
+    Writes a large file with dd, samples /proc/diskstats and /proc/meminfo
+    every 2s for the duration. Returns disk_avg, disk_min, disk_max (MB/s)
+    and dirty_avg, dirty_max (MB).
+    """
+    test_file = f"{MOUNT_POINT}/.autotune_write_test"
+    dev = detect_block_device() or "sda"
+
+    # Calculate dd count — write ~1GB per 10s to keep the disk busy
+    # bs=1M, so count = seconds * 100 (100 MB/s target feed rate)
+    count = seconds * 100
+
+    log(f"    dd if=/dev/zero of={test_file} bs=1M count={count}")
+
+    # Start dd in background
+    dd_proc = subprocess.Popen(
+        f"dd if=/dev/zero of={test_file} bs=1M count={count} conv=fdatasync 2>/dev/null",
         shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
-    time.sleep(seconds + 5)
 
-    # Get report
-    report = run(f"bash {BOTTLENECK} --report=3", timeout=15)
+    time.sleep(1)  # let dd start
 
-    # Parse the report
+    # Sample disk write rate and dirty pages
+    samples_disk = []
+    samples_dirty = []
+
+    end_time = time.time() + seconds
+
+    # Read initial diskstats
+    prev_sectors = _read_disk_sectors(dev)
+    prev_time = time.time()
+
+    while time.time() < end_time and dd_proc.poll() is None:
+        time.sleep(2)
+
+        curr_sectors = _read_disk_sectors(dev)
+        curr_time = time.time()
+        dt = curr_time - prev_time
+
+        if dt > 0 and curr_sectors is not None and prev_sectors is not None:
+            # sectors are 512 bytes
+            mb_s = ((curr_sectors - prev_sectors) * 512) / (1024 * 1024) / dt
+            samples_disk.append(int(mb_s))
+
+        # Dirty pages
+        dirty_mb = _read_dirty_mb()
+        if dirty_mb is not None:
+            samples_dirty.append(dirty_mb)
+
+        prev_sectors = curr_sectors
+        prev_time = curr_time
+
+    # Wait for dd to finish, then clean up
+    try:
+        dd_proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        dd_proc.kill()
+
+    # Remove test file
+    try:
+        os.remove(test_file)
+    except OSError:
+        pass
+
     metrics = {}
-    for line in report.splitlines():
-        line = line.strip()
-        m = re.match(r"Net:\s+avg=(\d+)\s+min=(\d+)\s+max=(\d+)", line)
-        if m:
-            metrics["net_avg"] = int(m.group(1))
-            metrics["net_min"] = int(m.group(2))
-            metrics["net_max"] = int(m.group(3))
-        m = re.match(r"Disk:\s+avg=(\d+)\s+min=(\d+)\s+max=(\d+)", line)
-        if m:
-            metrics["disk_avg"] = int(m.group(1))
-            metrics["disk_min"] = int(m.group(2))
-            metrics["disk_max"] = int(m.group(3))
-        m = re.match(r"Dirty:\s+avg=(\d+)\s+min=(\d+)\s+max=(\d+)", line)
-        if m:
-            metrics["dirty_avg"] = int(m.group(1))
-            metrics["dirty_min"] = int(m.group(2))
-            metrics["dirty_max"] = int(m.group(3))
-        m = re.match(r"CPU:\s+avg=(\d+)%\s+max=(\d+)%", line)
-        if m:
-            metrics["cpu_avg"] = int(m.group(1))
-            metrics["cpu_max"] = int(m.group(2))
+    if samples_disk:
+        metrics["disk_avg"] = sum(samples_disk) // len(samples_disk)
+        metrics["disk_min"] = min(samples_disk)
+        metrics["disk_max"] = max(samples_disk)
+    if samples_dirty:
+        metrics["dirty_avg"] = sum(samples_dirty) // len(samples_dirty)
+        metrics["dirty_min"] = min(samples_dirty)
+        metrics["dirty_max"] = max(samples_dirty)
+    metrics["samples"] = len(samples_disk)
 
-    if not metrics:
-        log_err("Failed to parse bottleneck report")
-        log_err(f"Raw output:\n{report}")
+    if not samples_disk:
+        log_err("No disk samples collected — dd may not have started")
 
     return metrics
+
+
+def _read_disk_sectors(dev: str) -> Optional[int]:
+    """Read total sectors written from /proc/diskstats for device."""
+    try:
+        with open("/proc/diskstats") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 10 and parts[2] == dev:
+                    # Field 10 (index 9) = sectors written
+                    return int(parts[9])
+    except (IOError, IndexError, ValueError):
+        pass
+    return None
+
+
+def _read_dirty_mb() -> Optional[int]:
+    """Read current dirty pages in MB from /proc/meminfo."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("Dirty:"):
+                    kb = int(line.split()[1])
+                    return kb // 1024
+    except (IOError, ValueError):
+        pass
+    return None
+
+
+def _get_measure_fn(layer: str):
+    """Return the measurement function for a given layer."""
+    if layer == "network":
+        return _measure_network
+    elif layer == "write":
+        return measure_write_speed
+    else:
+        # rsync layer — will need its own measurement (TODO)
+        return measure_write_speed
 
 
 # ── Test logic ───────────────────────────────────────────
@@ -464,15 +531,12 @@ def test_param(param: Param, dev: str, sample_secs: int, dry_run: bool = False) 
         result["action"] = "dry-run"
         return result
 
-    # Choose measurement method
-    is_network = param.layer == "network"
+    # Choose measurement method by layer
+    measure = _get_measure_fn(param.layer)
 
     # Measure baseline
     log_info(f"    Measuring baseline ({sample_secs}s)...")
-    if is_network:
-        before = _measure_network(sample_secs)
-    else:
-        before = measure_bottleneck(sample_secs)
+    before = measure(sample_secs)
     result["before"] = before
     _print_metrics(before, "BEFORE")
 
@@ -483,16 +547,13 @@ def test_param(param: Param, dev: str, sample_secs: int, dry_run: bool = False) 
     log(f"    Value now: {new_val}")
 
     # Settle — network changes are instant, others need time
-    settle = 3 if is_network else 30
+    settle = 3 if param.layer == "network" else 30
     log(f"    Settling ({settle}s)...")
     time.sleep(settle)
 
     # Measure after
     log_info(f"    Measuring after ({sample_secs}s)...")
-    if is_network:
-        after = _measure_network(sample_secs)
-    else:
-        after = measure_bottleneck(sample_secs)
+    after = measure(sample_secs)
     result["after"] = after
     _print_metrics(after, "AFTER")
 
