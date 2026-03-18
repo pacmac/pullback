@@ -11,6 +11,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import tuning
 
+# Params displayed and entered in MB
+_MB_KEYS = {"bdi_max_bytes", "rmem_max", "wmem_max"}
+_MB = 1024 * 1024
+
+
+def _to_mb(key, val):
+    """Convert bytes to MB for display."""
+    if key in _MB_KEYS and isinstance(val, (int, float)) and val > 0:
+        return f"{int(val) // _MB}MB"
+    if key in _MB_KEYS and isinstance(val, str) and val.isdigit() and int(val) > 0:
+        return f"{int(val) // _MB}MB"
+    return str(val)
+
+
+def _from_mb(key, val_str):
+    """Convert MB input to bytes for byte params."""
+    if key in _MB_KEYS:
+        try:
+            return int(float(val_str)) * _MB
+        except ValueError:
+            return None
+    return val_str
+
 
 def main():
     mount_point = "/backup"
@@ -31,7 +54,9 @@ def main():
                 val = "?"
             default = p["default"]
             marker = "" if str(val) == str(default) else " *"
-            print(f"  {i:>2}. {key:<32} {str(val):<20} {default}{marker}")
+            disp_val = _to_mb(key, val)
+            disp_def = _to_mb(key, default)
+            print(f"  {i:>2}. {key:<32} {disp_val:<20} {disp_def}{marker}")
 
         print()
         print("  0. Exit")
@@ -67,13 +92,17 @@ def main():
         current = live.get(key, "?")
         default = param["default"]
 
+        disp_current = _to_mb(key, current)
+        disp_default = _to_mb(key, default)
+        unit = " (MB)" if key in _MB_KEYS else ""
+
         print()
         print(f"  {key}")
-        print(f"  Current: {current}")
-        print(f"  Default: {default}")
+        print(f"  Current: {disp_current}")
+        print(f"  Default: {disp_default}")
         print()
-        print(f"  d = set to default ({default})")
-        print(f"  or enter a new value")
+        print(f"  d = set to default ({disp_default})")
+        print(f"  or enter a new value{unit}")
         print()
 
         try:
@@ -82,13 +111,17 @@ def main():
             print()
             continue
 
-        if val_input == "" :
+        if val_input == "":
             continue
 
         if val_input.lower() == "d":
             new_val = default
+        elif key in _MB_KEYS:
+            new_val = _from_mb(key, val_input)
+            if new_val is None:
+                print(f"  Invalid MB value: {val_input}")
+                continue
         else:
-            # Parse the input to match the type of the default
             if isinstance(default, bool):
                 new_val = val_input.lower() in ("true", "1", "yes", "on")
             elif isinstance(default, int):
