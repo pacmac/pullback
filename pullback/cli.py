@@ -413,6 +413,9 @@ def _dd_measure(mount_point, dd_size_mb=2048):
     except OSError:
         pass
 
+    # Flush any pending writes from previous test
+    subprocess.run(["sync"], timeout=30)
+
     dd_proc = subprocess.Popen(
         f"dd if=/dev/zero of={test_file} bs=1M count={dd_size_mb} conv=fdatasync",
         shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
