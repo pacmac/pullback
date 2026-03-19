@@ -92,6 +92,7 @@ PARAM_REGISTRY = [
         "sysfs_pattern": "/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor",
         "default": "ondemand",
         "unit": "str",
+        "options": ["ondemand", "performance", "conservative", "powersave"],
     },
     {
         "key": "scheduler",
@@ -100,6 +101,7 @@ PARAM_REGISTRY = [
         "sysfs": "/sys/block/{dev}/queue/scheduler",
         "default": "none",
         "unit": "str",
+        "options": ["none", "mq-deadline", "kyber", "bfq"],
     },
     {
         "key": "nr_requests",

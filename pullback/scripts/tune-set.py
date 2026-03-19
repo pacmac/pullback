@@ -289,11 +289,16 @@ def main():
         print(f"  Default: {disp_default}")
         print()
         print(f"  d = set to default ({disp_default})")
+        options = param.get("options")
         if unit == "bool":
             print(f"  1 = on")
             print(f"  2 = off")
         elif unit == "bytes":
             print(f"  or enter value in MB")
+        elif options:
+            for oi, opt in enumerate(options, 1):
+                marker = " (current)" if str(opt) == str(current) else ""
+                print(f"  {oi} = {opt}{marker}")
         else:
             print(f"  or enter a new value")
         print()
@@ -309,6 +314,8 @@ def main():
 
         if val_input.lower() == "d":
             new_val = default
+        elif options and val_input.isdigit() and 1 <= int(val_input) <= len(options):
+            new_val = options[int(val_input) - 1]
         else:
             new_val, err = _parse(val_input, unit)
             if err:
