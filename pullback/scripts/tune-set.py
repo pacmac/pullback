@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import tuning
+from monitor import Monitor
 
 _MB = 1024 * 1024
 
@@ -130,74 +131,37 @@ def cmd_defaults(mount_point="/backup"):
 
 def cmd_monitor(mount_point="/backup", duration=0):
     """Monitor live stats. Runs until Ctrl+C or duration seconds."""
-    iface = "eth0"
-    dev = tuning.block_device(mount_point) or "sda"
+    mon = Monitor(mount_point)
 
     print(f"{'':>8} {'Dirty':>8} {'WB':>8} {'Net MB/s':>10} {'Disk MB/s':>10}")
     print(f"{'─'*8} {'─'*8} {'─'*8} {'─'*10} {'─'*10}")
 
-    prev_rx = int(tuning._read_sysfs(f"/sys/class/net/{iface}/statistics/rx_bytes") or 0)
-    prev_disk = 0
-    with open("/proc/diskstats") as f:
-        for line in f:
-            parts = line.split()
-            if len(parts) >= 10 and parts[2] == dev:
-                prev_disk = int(parts[9])
-    prev_t = time.time()
-    start_t = prev_t
-
-    net_samples = []
-    disk_samples = []
+    start_t = time.time()
+    R = "\033[0m"
 
     try:
         while True:
             time.sleep(2)
-            curr_rx = int(tuning._read_sysfs(f"/sys/class/net/{iface}/statistics/rx_bytes") or 0)
-            curr_disk = 0
-            with open("/proc/diskstats") as f:
-                for line in f:
-                    parts = line.split()
-                    if len(parts) >= 10 and parts[2] == dev:
-                        curr_disk = int(parts[9])
-            curr_t = time.time()
-            dt = curr_t - prev_t
+            s = mon.sample()
+            a = mon.averages()
 
-            dirty_kb = tuning._read_meminfo("Dirty") or 0
-            wb_kb = tuning._read_meminfo("Writeback") or 0
-            net_mbs = int((curr_rx - prev_rx) / _MB / dt) if dt > 0 else 0
-            disk_mbs = int((curr_disk - prev_disk) * 512 / _MB / dt) if dt > 0 else 0
+            anc = _speed_colour(a["net_avg"])
+            adc = _speed_colour(a["disk_avg"])
+            cnc = _speed_colour(s["net_mbs"])
+            cdc = _speed_colour(s["disk_mbs"])
 
-            prev_rx = curr_rx
-            prev_disk = curr_disk
-            prev_t = curr_t
+            print(f"  avg  {a['dirty_avg']:>6}MB {s['writeback_mb']:>6}MB {anc}{a['net_avg']:>8}{R} {adc}{a['disk_avg']:>8}{R}")
+            print(f"  now  {s['dirty_mb']:>6}MB {s['writeback_mb']:>6}MB {cnc}{s['net_mbs']:>8}{R} {cdc}{s['disk_mbs']:>8}{R}")
 
-            if net_mbs > 0:
-                net_samples.append(net_mbs)
-            if disk_mbs > 0:
-                disk_samples.append(disk_mbs)
-
-            avg_net = sum(net_samples) // len(net_samples) if net_samples else 0
-            avg_disk = sum(disk_samples) // len(disk_samples) if disk_samples else 0
-
-            R = "\033[0m"
-            nc = _speed_colour(net_mbs)
-            dc = _speed_colour(disk_mbs)
-            anc = _speed_colour(avg_net)
-            adc = _speed_colour(avg_disk)
-
-            print(f"  avg  {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {anc}{avg_net:>8}{R} {adc}{avg_disk:>8}{R}")
-            print(f"  now  {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {nc}{net_mbs:>8}{R} {dc}{disk_mbs:>8}{R}")
-
-            if duration > 0 and (curr_t - start_t) >= duration:
+            if duration > 0 and (time.time() - start_t) >= duration:
                 break
     except KeyboardInterrupt:
         pass
 
-    if net_samples or disk_samples:
+    a = mon.averages()
+    if a["net_samples"] or a["disk_samples"]:
         print()
-        avg_net = sum(net_samples) // len(net_samples) if net_samples else 0
-        avg_disk = sum(disk_samples) // len(disk_samples) if disk_samples else 0
-        print(f"Average: Net={avg_net} MB/s  Disk={avg_disk} MB/s  ({len(net_samples)} samples)")
+        print(f"Average: Net={a['net_avg']} MB/s  Disk={a['disk_avg']} MB/s  ({a['net_samples']} samples)")
 
 
 def cmd_save(mount_point="/backup"):
@@ -527,8 +491,7 @@ def _run_monitor_interactive(mount_point, header=None):
     """Run live monitor until any key pressed. Returns the key pressed."""
     import select, termios, tty
 
-    iface = "eth0"
-    dev = tuning.block_device(mount_point) or "sda"
+    mon = Monitor(mount_point)
 
     if header:
         print(f"  {header}")
@@ -538,81 +501,41 @@ def _run_monitor_interactive(mount_point, header=None):
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     key_pressed = ""
+    last_active = time.time()
+    R = "\033[0m"
+    DIM = "\033[2m"
+
     try:
         tty.setraw(fd)
-
-        prev_rx = int(tuning._read_sysfs(f"/sys/class/net/{iface}/statistics/rx_bytes") or 0)
-        prev_disk = 0
-        with open("/proc/diskstats") as f:
-            for line in f:
-                parts = line.split()
-                if len(parts) >= 10 and parts[2] == dev:
-                    prev_disk = int(parts[9])
-        prev_t = time.time()
-
-        net_samples = []
-        disk_samples = []
-        dirty_samples = []
-        last_active = time.time()
 
         while True:
             if select.select([sys.stdin], [], [], 2)[0]:
                 key_pressed = sys.stdin.read(1)
                 break
 
-            curr_rx = int(tuning._read_sysfs(f"/sys/class/net/{iface}/statistics/rx_bytes") or 0)
-            curr_disk = 0
-            with open("/proc/diskstats") as f:
-                for line in f:
-                    parts = line.split()
-                    if len(parts) >= 10 and parts[2] == dev:
-                        curr_disk = int(parts[9])
-            curr_t = time.time()
-            dt = curr_t - prev_t
+            s = mon.sample()
+            a = mon.averages()
 
-            dirty_kb = tuning._read_meminfo("Dirty") or 0
-            wb_kb = tuning._read_meminfo("Writeback") or 0
-            net_mbs = int((curr_rx - prev_rx) / _MB / dt) if dt > 0 else 0
-            disk_mbs = int((curr_disk - prev_disk) * 512 / _MB / dt) if dt > 0 else 0
-
-            prev_rx = curr_rx
-            prev_disk = curr_disk
-            prev_t = curr_t
-
-            R = "\033[0m"
-            DIM = "\033[2m"
-
-            if net_mbs == 0 and disk_mbs == 0:
-                idle_secs = int(curr_t - last_active)
+            if mon.is_idle(s):
+                idle_secs = int(time.time() - last_active)
                 sys.stdout.write(
-                    f"\r  {DIM}{'idle':>8} {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {'--':>8} {'--':>8}  {idle_secs:>4}s{R}  "
+                    f"\r  {DIM}{'idle':>8} {s['dirty_mb']:>6}MB {s['writeback_mb']:>6}MB {'--':>8} {'--':>8}  {idle_secs:>4}s{R}  "
                     f"\n\r  {DIM}{'':>8} {'':>6}   {'':>6}   {'':>8} {'':>8}       {R}  "
                     f"\033[A"
                 )
                 sys.stdout.flush()
                 continue
 
-            last_active = curr_t
+            last_active = time.time()
 
-            if net_mbs > 0:
-                net_samples.append(net_mbs)
-            if disk_mbs > 0:
-                disk_samples.append(disk_mbs)
-            if dirty_kb > 0:
-                dirty_samples.append(dirty_kb // 1024)
-
-            avg_net = sum(net_samples) // len(net_samples) if net_samples else 0
-            avg_disk = sum(disk_samples) // len(disk_samples) if disk_samples else 0
-            avg_dirty = sum(dirty_samples) // len(dirty_samples) if dirty_samples else 0
-
-            anc = _speed_colour(avg_net)
-            adc = _speed_colour(avg_disk)
-            cnc = _speed_colour(net_mbs)
-            cdc = _speed_colour(disk_mbs)
+            anc = _speed_colour(a["net_avg"])
+            adc = _speed_colour(a["disk_avg"])
+            cnc = _speed_colour(s["net_mbs"])
+            cdc = _speed_colour(s["disk_mbs"])
 
             sys.stdout.write(
-                f"\r  {'avg':>8} {avg_dirty:>6}MB {wb_kb//1024:>6}MB {anc}{avg_net:>8}{R} {adc}{avg_disk:>8}{R}       "
-                f"\n\r  {'now':>8} {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {cnc}{net_mbs:>8}{R} {cdc}{disk_mbs:>8}{R}       "
+                f"\r  {'avg':>8} {a['dirty_avg']:>6}MB {s['writeback_mb']:>6}MB {anc}{a['net_avg']:>8}{R} {adc}{a['disk_avg']:>8}{R}       "
+                f"\n\r  {'now':>8} {s['dirty_mb']:>6}MB {s['writeback_mb']:>6}MB {cnc}{s['net_mbs']:>8}{R} {cdc}{s['disk_mbs']:>8}{R}       "
                 f"\033[A"
             )
             sys.stdout.flush()
