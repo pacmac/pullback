@@ -80,7 +80,7 @@ def main():
                 print(f"  {i:>2}. {key:<32} {disp_val:<20} {disp_def}")
 
         print()
-        print("  0. Exit")
+        print("  q. Quit")
         print("  a. Set ALL to defaults")
         print("  s. Save current values to YAML")
         print("  l. Load and apply from saved YAML")
@@ -92,7 +92,7 @@ def main():
             print()
             break
 
-        if choice == "0" or choice == "":
+        if choice.lower() == "q" or choice == "":
             break
 
         if choice.lower() == "a":
