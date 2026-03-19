@@ -309,8 +309,11 @@ def apply_values(tuning, mount_point="/backup"):
 
         elif ptype == "sysfs" and dev:
             path = p["sysfs"].replace("{dev}", dev)
-            _write_sysfs(path, str(val))
-            applied.append(f"{key}={val}")
+            if _write_sysfs(path, str(val)):
+                applied.append(f"{key}={val}")
+            else:
+                log.warning(f"Failed to set {key}={val} at {path}")
+                applied.append(f"{key}=FAILED")
 
         elif ptype == "rps":
             cpus_path = p["sysfs_cpus"].replace("{iface}", iface)
@@ -396,12 +399,13 @@ def status_yaml(mount_point="/backup", tuning_cfg=None):
 
 
 def _write_sysfs(path, value):
-    """Write a value to a sysfs/proc file. Silently ignore errors."""
+    """Write a value to a sysfs/proc file. Returns True on success."""
     try:
         with open(path, "w") as f:
             f.write(value)
+        return True
     except (OSError, IOError):
-        pass
+        return False
 
 
 def _read_sysfs(path):

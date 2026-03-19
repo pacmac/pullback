@@ -113,10 +113,27 @@ def cmd_set(key, val_str, mount_point="/backup"):
 
     applied = tuning.apply_values({key: val}, mount_point)
     if applied:
+        failed = any("FAILED" in a for a in applied)
         # Re-read to confirm
         live = tuning.read_live(mount_point)
         actual = live.get(key, "?")
-        print(f"{key}: {_fmt(actual, unit)}")
+        disp = _fmt(actual, unit)
+        if failed:
+            print(f"FAILED: {key} - requested {_fmt(val, unit)}, actual {disp}", file=sys.stderr)
+            if key == "bdi_max_bytes":
+                dirty_ratio = int(tuning._sysctl_get("vm.dirty_ratio") or 20)
+                try:
+                    with open("/proc/meminfo") as f:
+                        for line in f:
+                            if line.startswith("MemAvailable:"):
+                                avail_kb = int(line.split()[1])
+                                limit_mb = (avail_kb * dirty_ratio // 100) // 1024
+                                print(f"  dirty_ratio={dirty_ratio}% limits BDI to <{limit_mb}MB", file=sys.stderr)
+                                break
+                except (IOError, ValueError):
+                    pass
+        else:
+            print(f"{key}: {disp}")
     else:
         print(f"Failed to apply {key}={val}", file=sys.stderr)
         sys.exit(1)
