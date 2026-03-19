@@ -29,7 +29,8 @@ Most backup tools push data from the source to the backup. pullBack does the opp
 
 - Incremental rsync pull backups over SSH or rsync daemon
 - Web dashboard with real-time progress and system monitoring
-- CLI for manual sync, status, cancel
+- **Terminal dashboard** (`cli.py watch`) — full interactive TUI with live stats
+- CLI for manual sync, status, cancel, tuning
 - Per-folder sync control from dashboard
 - Per-folder `--delete` option (mirror mode)
 - Ransomware detection (`.fprint` fingerprint files, entropy analysis)
@@ -37,9 +38,11 @@ Most backup tools push data from the source to the backup. pullBack does the opp
 - USB drive auto-mount with flag file safety (never auto-formats)
 - Email alerts (success, failure, ransomware warning, disk space, sync start)
 - Configurable disk space warning threshold
-- Performance auto-tuning with sweep mode
-- Bottleneck monitoring daemon with min/avg/max reporting
-- Config overlay system (`config.local.yaml` for credentials and per-host overrides)
+- **Performance auto-tuning** with per-param sweep (disk, network, rsync layers)
+- **Interactive tuning utility** (`tune-set.py`) — live parameter editor with sweep and monitor
+- **Shared monitoring** (`monitor.py`) — rolling window averages used by dashboard, CLI, and engine
+- Per-drive tuning via `.pullback-tune.yaml` on the backup volume
+- Config overlay system (`config.yaml` → `config.local.yaml` → `.pullback-tune.yaml`)
 
 ## Quick Start
 
@@ -126,6 +129,8 @@ rsync:
     - --archive
     - --numeric-ids
     - --partial
+    - --whole-file
+    - --inplace
     - --info=progress2,name1
 
 ssh:
@@ -250,18 +255,25 @@ pullBack includes extensive tuning for sustained rsync transfers, particularly o
 
 ### Tuning parameters
 
+All tuning is defined in `config.yaml` and applied at sync start. No boot-time overrides — config.yaml is the single source of truth.
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `dirty_ratio` | 5 | % of RAM for dirty page hard limit |
-| `dirty_background_ratio` | 2 | % of RAM to trigger background writeback |
-| `dirty_expire_centisecs` | 1000 | Age (cs) before dirty pages must be written |
-| `dirty_writeback_centisecs` | 500 | Flusher thread wakeup interval (cs) |
-| `bdi_max_bytes` | 83886080 | Per-device dirty page cap in bytes (BDI). 0 to disable |
+| `dirty_ratio` | 2 | % of RAM for dirty page hard limit |
+| `dirty_background_ratio` | 1 | % of RAM to trigger background writeback |
+| `dirty_expire_centisecs` | 100 | Age (cs) before dirty pages must be written |
+| `dirty_writeback_centisecs` | 100 | Flusher thread wakeup interval (cs) |
+| `bdi_strict_limit` | 0 | Per-device BDI enforcement (0=off, 1=on) |
+| `bdi_max_bytes` | 0 | Per-device dirty page cap in bytes. 0 to disable |
 | `rps_enabled` | true | Distribute network softirqs across CPUs (Pi) |
+| `rps_cpus` | "c" | CPU mask for RPS (c = CPU2+3, f = all) |
 | `eee_off` | true | Disable Energy Efficient Ethernet (Pi bcmgenet bug) |
 | `cpu_governor` | performance | CPU frequency governor |
+| `scheduler` | mq-deadline | I/O scheduler for backup device |
+| `net_interface` | eth0 | Network interface for monitoring and RPS |
+| `tcp_slow_start_after_idle` | 0 | Disable TCP slow start after idle |
 
-**`bdi_max_bytes`** is the most impactful setting for USB drives. It uses the kernel's per-device BDI (Backing Device Info) `strict_limit` to cap dirty pages for the backup drive only, without throttling other devices. Without it, dirty pages accumulate and cause write stalls. Tested: **3x throughput improvement** on USB HDD.
+**`bdi_max_bytes`** with `bdi_strict_limit=1` caps dirty pages per-device. The value must be less than the global dirty limit (set by `dirty_ratio`). For aggressive ratio settings (1-2%), this limits BDI to ~10-40MB.
 
 ### Per-drive tuning
 
@@ -281,66 +293,52 @@ tuning:
   bdi_max_bytes: 0  # no cap needed
 ```
 
-Drive tuning is applied automatically at sync start. Use `pi-tune-status.sh --save=/backup/.pullback-tune.yaml` to snapshot current live settings onto the drive.
+Drive tuning is applied automatically at sync start. Use the tune-set utility to save settings to the drive.
 
 See [TUNING.md](pullback/docs/TUNING.md) for full details.
+
+### Interactive tuning
+
+```bash
+# Interactive parameter editor with live monitor and sweep
+python3 scripts/tune-set.py
+
+# CLI mode
+python3 scripts/tune-set.py list                    # Show all params
+python3 scripts/tune-set.py set dirty_ratio 2       # Set a param
+python3 scripts/tune-set.py set bdi_max_bytes 40    # Set BDI (in MB)
+python3 scripts/tune-set.py defaults                # Reset all to OS defaults
+python3 scripts/tune-set.py monitor                 # Live stats monitor
+python3 scripts/tune-set.py monitor 30              # Monitor for 30 seconds
+python3 scripts/tune-set.py save                    # Save to state/tune-YYMMDD.yaml
+python3 scripts/tune-set.py save-drive              # Save to /backup/.pullback-tune.yaml
+python3 scripts/tune-set.py load <file>             # Load and apply from saved YAML
+```
+
+Interactive mode features:
+- **Sweep mode**: Press `>` / `<` to step through value ranges with live monitoring
+- **Live monitor**: Press `m` for avg/now speeds with colour coding (red <50, orange 50-80, green >80 MB/s)
+- **Save/load**: Save snapshots, load previous configs, write to backup volume
 
 ### Auto-tuning
 
 ```bash
-# Preview
-bash scripts/autotune.sh --dry-run
+# Sweep disk params (BDI, dirty ratio, scheduler, etc.)
+python3 cli.py tune autotune --layer=disk
 
-# Binary test (on/off per param, needs active sync)
-bash scripts/autotune.sh
+# Sweep network params
+python3 cli.py tune autotune --layer=network
 
-# Sweep mode (find optimal value per sysctl param)
-bash scripts/autotune.sh --sweep
-
-# Custom sample duration (default 120s)
-bash scripts/autotune.sh --sweep --sample=60
+# Preview without changes
+python3 cli.py tune autotune --layer=disk --dry-run
 ```
 
-### Monitoring
-
-```bash
-# Interactive monitor
-bash scripts/pi-bottleneck.sh
-
-# Run as daemon, log to file
-bash scripts/pi-bottleneck.sh --daemon
-
-# Report from last N minutes of log
-bash scripts/pi-bottleneck.sh --report=5
-```
+Sweep ranges are defined in `config.yaml` under `autotune.disk`, `autotune.network`, `autotune.rsync`.
 
 ### Tuning docs
 
 - [TUNING.md](pullback/docs/TUNING.md) — Parameter reference, rationale, procedure
 - [TUNEDATA.md](pullback/docs/TUNEDATA.md) — Test results with before/after data
-- [TUNEDEFAULT.md](pullback/docs/TUNEDEFAULT.md) — OS/kernel factory defaults
-
-### View live tuning
-
-```bash
-bash scripts/pi-tune-status.sh
-bash scripts/pi-tune-status.sh --save                              # print yaml to stdout
-bash scripts/pi-tune-status.sh --save=/backup/.pullback-tune.yaml  # save to drive
-```
-
-### Revert all tuning
-
-```bash
-sudo bash scripts/pi-tune-revert.sh
-```
-
-### Persist tuning
-
-```bash
-sudo bash scripts/pi-tune-install.sh
-```
-
-Reads merged config (config.yaml + config.local.yaml) and writes sysctl + systemd boot service.
 
 ## Self-Backup (Disaster Recovery)
 
@@ -409,62 +407,69 @@ Real-time monitoring at `http://<host>:8080/`
 
 ```bash
 cd pullback
-venv/bin/python3 cli.py sync                          # Sync all sources
-venv/bin/python3 cli.py sync --source pve             # Sync one source
-venv/bin/python3 cli.py sync --source pve --folder shares/pac  # Sync one folder
-venv/bin/python3 cli.py status                        # Show status
-venv/bin/python3 cli.py cancel --source pve           # Cancel running sync
-venv/bin/python3 cli.py config                        # Show loaded config
+
+# Sync
+python3 cli.py sync                                   # Sync all sources
+python3 cli.py sync --source pve                      # Sync one source
+python3 cli.py sync --source pve --folder shares/pac  # Sync one folder
+python3 cli.py status                                 # Show status
+python3 cli.py cancel --source pve                    # Cancel running sync
+
+# Terminal dashboard
+python3 cli.py watch                                  # Live TUI (r=run, c=cancel, q=quit)
+
+# Config
+python3 cli.py config                                 # Show loaded config (JSON)
+python3 cli.py config --dump                          # Show loaded config (YAML)
+
+# Tuning
+python3 cli.py tune status                            # Current tuning as YAML
+python3 cli.py tune apply                             # Apply config tuning to system
+python3 cli.py tune defaults                          # Revert all to OS defaults
+python3 cli.py tune capture                           # Capture OS defaults to file
+python3 cli.py tune autotune --layer=disk             # Sweep disk params
+python3 cli.py tune autotune --layer=network          # Sweep network params
 ```
 
 ## Scripts
 
-### General
 | Script | Description |
 |--------|-------------|
 | `setup.sh` | Full install (venv, SSH keys, udev, web service) |
+| `pi-setup.sh` | General setup + capture system defaults |
 | `pyenv-setup.sh` | Create Python venv and install pyyaml |
 | `ssh-setup.sh` | Generate SSH key and configure access |
 | `udev-install.sh` | Install udev rule and systemd mount service |
 | `udev-mount.sh` | Called by udev on USB plug-in (mount or refuse) |
 | `web-install.sh` | Install web dashboard systemd service |
 | `hd-init.sh` | Initialise USB drive (format with confirmation) |
-| `autotune.sh` | Automated tuning with binary test and sweep modes |
-
-### Pi-specific
-| Script | Description |
-|--------|-------------|
-| `pi-setup.sh` | General setup + capture system defaults |
-| `pi-tune-install.sh` | Persist tuning to sysctl + systemd boot service |
-| `pi-tune-revert.sh` | Revert all tuning to OS defaults |
-| `pi-tune-boot.sh` | Applied on boot (RPS, EEE, governor, BDI) |
-| `pi-tune-status.sh` | Show all live tuning settings (`--save` for yaml output) |
-| `pi-bottleneck.sh` | Performance monitor with daemon and report modes |
-| `pi-capture-defaults.sh` | Capture system defaults before tuning |
+| `self-backup.sh` | Image SD card to backup volume |
+| `tune-set.py` | Interactive tuning parameter editor with sweep and monitor |
 
 ## Project Structure
 
 ```
 pullback/
-  config.yaml              # Main config (committed)
+  config.yaml              # Main config — SSOT (committed)
   config.local.yaml        # Per-host overrides (gitignored)
   config.local.yaml.example
-  engine.py                # Sync orchestrator
+  engine.py                # Sync orchestrator with flock guard
   sync.py                  # rsync wrapper
-  config.py                # Config loader with deep merge
+  config.py                # Config loader (config.yaml → local → drive tune)
   state.py                 # JSON state persistence
-  cli.py                   # Command-line interface
+  cli.py                   # CLI: sync, status, cancel, watch, tune, config
   web.py                   # Web dashboard server
+  monitor.py               # System monitor — SSOT for disk/net/dirty stats
+  tuning.py                # Tuning — SSOT for param registry, apply, read
   alerts.py                # Email alerts
   ransomware.py            # Ransomware detection
   retention.py             # Backup version pruning
-  tuning.py                # Per-drive tuning (BDI, sysctl, governor)
-  scripts/                 # Setup and maintenance scripts
+  scripts/                 # Setup scripts and tune-set utility
   static/                  # Dashboard HTML/CSS/JS
   udev/                    # udev rules and systemd service
   docs/                    # Specifications and test data
   keys/                    # SSH keys (gitignored)
-  state/                   # Runtime state (gitignored)
+  state/                   # Runtime state, monitor window (gitignored)
 ```
 
 ## License
