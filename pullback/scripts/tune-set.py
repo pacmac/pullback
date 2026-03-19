@@ -208,7 +208,7 @@ def main():
         print()
         print(f"  Dirty: {dirty_kb//1024}MB   Writeback: {wb_kb//1024}MB")
         print()
-        print("  q. Quit")
+        print("  q. Quit   r. Refresh")
         print("  a. Set ALL to defaults")
         print("  s. Save current values to YAML")
         print("  w. Write current values to backup volume")
@@ -224,6 +224,9 @@ def main():
 
         if choice.lower() == "q" or choice == "":
             break
+
+        if choice.lower() == "r":
+            continue
 
         if choice.lower() == "a":
             applied = tuning.apply_defaults(mount_point)
