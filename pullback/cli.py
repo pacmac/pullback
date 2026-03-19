@@ -669,7 +669,7 @@ def cmd_watch(args):
 
     def _bar(pct, width=25):
         filled = int(width * pct / 100)
-        return "█" * filled + "░" * (width - filled)
+        return "#" * filled + "-" * (width - filled)
 
     def _trunc(s, maxlen):
         return s[:maxlen-1] + "…" if len(s) > maxlen else s
@@ -775,14 +775,14 @@ def cmd_watch(args):
                     transferred = progress.get("bytes_transferred", 0)
                     elapsed = progress.get("elapsed", 0)
                     lines.append(_box_line(
-                        f"{_fmt_bytes(transferred)} transferred  •  {_fmt_dur(elapsed)} elapsed"
+                        f"{_fmt_bytes(transferred)} transferred / {_fmt_dur(elapsed)} elapsed"
                     ))
                 else:
                     last = state.get("last_success_at") or state.get("last_run_started_at")
                     dur = state.get("last_sync_duration", 0)
                     if last:
                         last_short = last[:19].replace("T", " ")
-                        lines.append(_box_line(f"{DIM}Last: {last_short}  •  {_fmt_dur(dur)}{R}"))
+                        lines.append(_box_line(f"{DIM}Last: {last_short} / {_fmt_dur(dur)}{R}"))
                     err = state.get("last_error")
                     if err:
                         lines.append(_box_line(f"\033[31m{_trunc(err, W-4)}{R}"))
@@ -802,7 +802,7 @@ def cmd_watch(args):
                 f"Disk  {dac}avg {a['disk_avg']:>3}{R} MB/s  {dc}now {s['disk_mbs']:>3}{R} MB/s"
             ))
             lines.append(_box_line(
-                f"Dirty {s['dirty_mb']}MB  •  Writeback {s['writeback_mb']}MB"
+                f"Dirty {s['dirty_mb']}MB / Writeback {s['writeback_mb']}MB"
             ))
 
             # Volume info
