@@ -170,55 +170,42 @@ def cmd_tune_defaults(args):
 
 
 def cmd_tune_install(args):
+    """Remove boot-time tuning (sysctl.d, systemd service). Tuning is applied at sync start only."""
     _require_root()
-    cfg = load_config(args.config)
-    t = cfg.get("tuning", {})
 
-    scripts_dir = PROJECT_DIR / "scripts"
-    sysctl_dst = Path("/etc/sysctl.d/99-pullback.conf")
-    tune_script = scripts_dir / "pi-tune-boot.sh"
+    sysctl_conf = Path("/etc/sysctl.d/99-pullback.conf")
     service_name = "pullback-tune"
     service_dst = Path(f"/etc/systemd/system/{service_name}.service")
+    boot_script = PROJECT_DIR / "scripts" / "pi-tune-boot.sh"
 
-    print("\n=== Config (merged) ===")
-    print(tuning.status_yaml())
-    print()
+    removed = []
+    if sysctl_conf.exists():
+        sysctl_conf.unlink()
+        removed.append(str(sysctl_conf))
 
-    # sysctl.conf
-    sysctl_dst.write_text(tuning.generate_sysctl_conf(t))
-    subprocess.run(["sysctl", "--load", str(sysctl_dst)],
-                   capture_output=True, timeout=5)
-    print(f"Installed: {sysctl_dst}")
+    if service_dst.exists():
+        subprocess.run(["systemctl", "stop", service_name], capture_output=True, timeout=10)
+        subprocess.run(["systemctl", "disable", service_name], capture_output=True, timeout=10)
+        service_dst.unlink()
+        subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=10)
+        removed.append(str(service_dst))
 
-    # Boot script
-    tune_script.write_text(tuning.generate_boot_script(t))
-    tune_script.chmod(0o755)
-    print(f"Generated: {tune_script}")
+    if boot_script.exists():
+        boot_script.unlink()
+        removed.append(str(boot_script))
 
-    # UAS
+    if removed:
+        print(f"Removed boot-time tuning:")
+        for r in removed:
+            print(f"  {r}")
+        print("\nTuning will be applied at sync start from config.yaml only.")
+    else:
+        print("No boot-time tuning found.")
+
+    # UAS (kernel cmdline, not runtime — keep this)
+    cfg = load_config(args.config)
     if cfg.get("usb", {}).get("uas"):
         _install_uas()
-
-    # systemd service
-    service_dst.write_text(f"""[Unit]
-Description=pullback performance tuning
-After=network.target
-
-[Service]
-Type=oneshot
-ExecStart={tune_script}
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-""")
-    subprocess.run(["systemctl", "daemon-reload"], capture_output=True, timeout=10)
-    subprocess.run(["systemctl", "enable", service_name], capture_output=True, timeout=10)
-    subprocess.run(["systemctl", "restart", service_name], capture_output=True, timeout=10)
-    print(f"Installed: {service_dst}")
-
-    print("\n=== Applied ===")
-    print(tuning.status_yaml())
 
 
 def _install_uas():
@@ -679,7 +666,7 @@ def main():
     tune_sub.add_parser("status", help="Show current tuning as YAML")
     tune_sub.add_parser("apply", help="Apply config tuning to system")
     tune_sub.add_parser("defaults", help="Revert all to OS defaults")
-    tune_sub.add_parser("install", help="Persist tuning to sysctl + systemd")
+    tune_sub.add_parser("install", help="Remove boot-time tuning (tuning applied at sync start only)")
     tc = tune_sub.add_parser("capture", help="Capture OS defaults to file")
     tc.add_argument("--force", action="store_true")
     ta = tune_sub.add_parser("autotune", help="Sweep tuning params")
