@@ -171,10 +171,9 @@ def main():
             dev = tuning.block_device(mount_point) or "sda"
             print()
             print("  Press any key to stop")
-            print(f"  {'Dirty':>8} {'WB':>8} {'Net MB/s':>10} {'Disk MB/s':>10}")
-            print(f"  {'─'*8} {'─'*8} {'─'*10} {'─'*10}")
+            print(f"  {'':>8} {'Dirty':>8} {'WB':>8} {'Net MB/s':>10} {'Disk MB/s':>10}")
+            print(f"  {'':>8} {'─'*8} {'─'*8} {'─'*10} {'─'*10}")
 
-            # Set terminal to raw mode so we can detect any keypress
             fd = sys.stdin.fileno()
             old_settings = termios.tcgetattr(fd)
             try:
@@ -189,8 +188,12 @@ def main():
                             prev_disk = int(parts[9])
                 prev_t = time.time()
 
+                # Running averages
+                net_samples = []
+                disk_samples = []
+                dirty_samples = []
+
                 while True:
-                    # Check for keypress (non-blocking)
                     if select.select([sys.stdin], [], [], 2)[0]:
                         sys.stdin.read(1)
                         break
@@ -210,10 +213,25 @@ def main():
                     net_mbs = int((curr_rx - prev_rx) / _MB / dt) if dt > 0 else 0
                     disk_mbs = int((curr_disk - prev_disk) * 512 / _MB / dt) if dt > 0 else 0
 
-                    nc = _speed_colour(net_mbs)
-                    dc = _speed_colour(disk_mbs)
+                    net_samples.append(net_mbs)
+                    disk_samples.append(disk_mbs)
+                    dirty_samples.append(dirty_kb // 1024)
+
+                    avg_net = sum(net_samples) // len(net_samples)
+                    avg_disk = sum(disk_samples) // len(disk_samples)
+                    avg_dirty = sum(dirty_samples) // len(dirty_samples)
+
                     R = "\033[0m"
-                    sys.stdout.write(f"\r  {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {nc}{net_mbs:>8}{R} {dc}{disk_mbs:>8}{R}  ")
+                    anc = _speed_colour(avg_net)
+                    adc = _speed_colour(avg_disk)
+                    cnc = _speed_colour(net_mbs)
+                    cdc = _speed_colour(disk_mbs)
+
+                    sys.stdout.write(
+                        f"\r  {'avg':>8} {avg_dirty:>6}MB {wb_kb//1024:>6}MB {anc}{avg_net:>8}{R} {adc}{avg_disk:>8}{R}  "
+                        f"\n\r  {'now':>8} {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {cnc}{net_mbs:>8}{R} {cdc}{disk_mbs:>8}{R}  "
+                        f"\033[A"  # move cursor back up one line
+                    )
                     sys.stdout.flush()
 
                     prev_rx = curr_rx
@@ -223,6 +241,7 @@ def main():
                 pass
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            print()
             print()
             continue
 
