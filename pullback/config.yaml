@@ -13,6 +13,7 @@ rsync:
     - --archive
     - --numeric-ids
     - --partial
+    - --whole-file
     - --info=progress2,name1
 
 ssh:
