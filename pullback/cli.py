@@ -829,7 +829,9 @@ def cmd_watch(args):
                 win.addstr("q", curses.A_BOLD)
                 win.addstr("=Quit")
 
-            win.refresh()
+            stdscr.noutrefresh()
+            win.noutrefresh()
+            curses.doupdate()
 
     curses.wrapper(_main)
 
