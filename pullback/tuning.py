@@ -579,7 +579,10 @@ def _eee_is_off(iface="eth0"):
             ["ethtool", "--show-eee", iface],
             capture_output=True, text=True, timeout=5,
         )
-        return "disabled" in r.stdout.lower()
+        for line in r.stdout.splitlines():
+            if "EEE status:" in line:
+                return "disabled" in line.lower()
+        return False
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
