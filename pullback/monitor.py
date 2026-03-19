@@ -14,7 +14,7 @@ import tuning
 
 _MB = 1024 * 1024
 _STATE_FILE = Path(__file__).parent / "state" / "monitor.json"
-_WINDOW_SIZE = 60  # rolling window: last 60 samples (~2 min at 2s intervals)
+_WINDOW_SIZE = 150  # rolling window: last 150 samples (~5 min at 2s intervals)
 _MIN_MBS = 6  # ignore samples below this (noise)
 
 
