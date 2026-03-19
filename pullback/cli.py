@@ -696,24 +696,35 @@ def cmd_watch(args):
             a = mon.averages()
             stdscr.erase()
             maxh, maxw = stdscr.getmaxyx()
-            bw = min(maxw - 1, 60)  # inner width
-            iw = bw - 2  # content width inside borders
 
-            def hline(row, left="├", right="┤"):
-                stdscr.addnstr(row, 0, left + "─" * (bw - 2) + right, maxw - 1)
+            # Create a bordered subwindow
+            box_h = 16  # max rows needed
+            box_w = min(maxw, 60)
+            if box_h > maxh: box_h = maxh
+            try:
+                win = curses.newwin(box_h, box_w, 0, 0)
+            except curses.error:
+                stdscr.refresh()
+                continue
+            win.border()
+            # Title in top border
+            win.addstr(0, 2, " pullback ", curses.A_BOLD)
 
-            def textline(row, text, attr=0):
-                stdscr.addstr(row, 0, "│")
-                stdscr.addnstr(row, 2, text, iw - 2, attr)
-                # Fill to right border
-                cy, cx = stdscr.getyx()
-                if cx < bw - 1:
-                    stdscr.addstr(row, bw - 1, "│")
+            row = 1
+            iw = box_w - 4  # usable width inside borders (border + space each side)
 
-            row = 0
-            # Top
-            stdscr.addnstr(row, 0, "┌─ pullback " + "─" * (bw - 13) + "┐", maxw - 1)
-            row += 1
+            def wtext(r, text, attr=0):
+                """Write text inside the box, truncated to fit."""
+                win.addnstr(r, 2, text, iw, attr)
+
+            def wdiv(r):
+                """Draw a horizontal divider."""
+                win.addch(r, 0, curses.ACS_LTEE)
+                win.hline(r, 1, curses.ACS_HLINE, box_w - 2)
+                try:
+                    win.addch(r, box_w - 1, curses.ACS_RTEE)
+                except curses.error:
+                    pass
 
             for sn, sc in cfg["sources"].items():
                 st = load_state(sn)
@@ -730,102 +741,95 @@ def cmd_watch(args):
                     status, scol = "IDLE", 5
 
                 # Source + status
-                stdscr.addstr(row, 0, "│")
-                src_text = f" {sn} ({sc.get('host', '')})"
-                stdscr.addnstr(row, 1, src_text, iw - len(status) - 2, curses.A_BOLD)
-                stdscr.addstr(row, bw - 1 - len(status) - 1, status, curses.color_pair(scol) | curses.A_BOLD)
-                stdscr.addstr(row, bw - 1, "│")
+                src = f"{sn} ({sc.get('host', '')})"
+                wtext(row, src, curses.A_BOLD)
+                spos = box_w - 3 - len(status)
+                if spos > 0:
+                    win.addstr(row, spos, status, curses.color_pair(scol) | curses.A_BOLD)
                 row += 1
 
-                if running:
+                if running and row < box_h - 3:
                     pct = pr.get("overall_pct", 0)
                     eta = pr.get("eta", "--") or "--"
                     suffix = f" {pct:>3}% ETA {eta}"
-                    bar_w = iw - 2 - len(suffix)
+                    bar_w = iw - len(suffix)
                     if bar_w < 5: bar_w = 5
                     filled = int(bar_w * pct / 100)
-
-                    stdscr.addstr(row, 0, "│ ")
-                    for i in range(bar_w):
-                        if i < filled:
-                            stdscr.addstr("█", curses.color_pair(3))
-                        else:
-                            stdscr.addstr("░")
-                    stdscr.addnstr(suffix, maxw - stdscr.getyx()[1] - 2)
-                    stdscr.addstr(row, bw - 1, "│")
+                    bar = "█" * filled + "░" * (bar_w - filled)
+                    win.addnstr(row, 2, bar, iw)
+                    # Overlay colour on filled part
+                    for i in range(filled):
+                        try:
+                            win.chgat(row, 2 + i, 1, curses.color_pair(3))
+                        except curses.error:
+                            pass
+                    win.addnstr(row, 2 + bar_w, suffix, iw - bar_w)
                     row += 1
 
                     cf = pr.get("current_file", "") or pr.get("step", "")
-                    if len(cf) > iw - 2:
-                        cf = cf[:iw - 3] + "…"
-                    textline(row, cf, curses.A_DIM)
+                    wtext(row, cf, curses.A_DIM)
                     row += 1
 
                     xf = pr.get("bytes_transferred", 0)
                     el = pr.get("elapsed", 0)
-                    textline(row, f"{_fb(xf)} transferred / {_fd(el)} elapsed")
+                    wtext(row, f"{_fb(xf)} transferred / {_fd(el)} elapsed")
                     row += 1
-                else:
+                elif not running:
                     last = st.get("last_success_at") or st.get("last_run_started_at")
                     dur = st.get("last_sync_duration", 0)
-                    if last:
-                        textline(row, f"Last: {last[:19].replace('T',' ')} / {_fd(dur)}", curses.A_DIM)
+                    if last and row < box_h - 3:
+                        wtext(row, f"Last: {last[:19].replace('T',' ')} / {_fd(dur)}", curses.A_DIM)
                         row += 1
                     err = st.get("last_error")
-                    if err:
-                        if len(err) > iw - 2: err = err[:iw - 3] + "…"
-                        textline(row, err, curses.color_pair(1))
+                    if err and row < box_h - 3:
+                        wtext(row, err, curses.color_pair(1))
                         row += 1
 
-            hline(row)
-            row += 1
+            if row < box_h - 6:
+                wdiv(row)
+                row += 1
 
             # Stats
-            def stat_line(row, label, avg, now):
-                stdscr.addstr(row, 0, "│ ")
-                stdscr.addstr(f"{label}  ")
-                stdscr.addstr("avg ", curses.A_DIM)
-                stdscr.addstr(f"{avg:>3}", curses.color_pair(_sp(avg)))
-                stdscr.addstr("  ")
-                stdscr.addstr("now ", curses.A_DIM)
-                stdscr.addstr(f"{now:>3}", curses.color_pair(_sp(now)))
-                stdscr.addstr(" MB/s")
-                stdscr.addstr(row, bw - 1, "│")
+            if row < box_h - 4:
+                def sline(r, label, avg, now):
+                    win.addnstr(r, 2, f"{label}  ", iw)
+                    win.addstr("avg ", curses.A_DIM)
+                    win.addstr(f"{avg:>3}", curses.color_pair(_sp(avg)))
+                    win.addstr("  now ", curses.A_DIM)
+                    win.addstr(f"{now:>3}", curses.color_pair(_sp(now)))
+                    win.addstr(" MB/s")
 
-            stat_line(row, "Net ", a["net_avg"], s["net_mbs"])
-            row += 1
-            stat_line(row, "Disk", a["disk_avg"], s["disk_mbs"])
-            row += 1
+                sline(row, "Net ", a["net_avg"], s["net_mbs"])
+                row += 1
+                sline(row, "Disk", a["disk_avg"], s["disk_mbs"])
+                row += 1
 
-            textline(row, f"Dirty {s['dirty_mb']}MB / Writeback {s['writeback_mb']}MB")
-            row += 1
+                wtext(row, f"Dirty {s['dirty_mb']}MB / Writeback {s['writeback_mb']}MB")
+                row += 1
 
-            try:
-                vst = os.statvfs(mount_point)
-                tg = vst.f_blocks * vst.f_frsize / 1024**3
-                fg = vst.f_bavail * vst.f_frsize / 1024**3
-                vol = f"Volume: {fg/1024:.1f} TB free / {tg/1024:.1f} TB" if tg >= 1024 else f"Volume: {fg:.0f} GB free / {tg:.0f} GB"
-            except OSError:
-                vol = "Volume: not mounted"
-            textline(row, vol)
-            row += 1
+                try:
+                    vst = os.statvfs(mount_point)
+                    tg = vst.f_blocks * vst.f_frsize / 1024**3
+                    fg = vst.f_bavail * vst.f_frsize / 1024**3
+                    vol = f"Volume: {fg/1024:.1f} TB free / {tg/1024:.1f} TB" if tg >= 1024 else f"Volume: {fg:.0f} GB free / {tg:.0f} GB"
+                except OSError:
+                    vol = "Volume: not mounted"
+                wtext(row, vol)
+                row += 1
 
-            hline(row)
-            row += 1
+            if row < box_h - 2:
+                wdiv(row)
+                row += 1
 
-            stdscr.addstr(row, 0, "│ ")
-            stdscr.addstr("r", curses.A_BOLD)
-            stdscr.addstr("=Run  ")
-            stdscr.addstr("c", curses.A_BOLD)
-            stdscr.addstr("=Cancel  ")
-            stdscr.addstr("q", curses.A_BOLD)
-            stdscr.addstr("=Quit")
-            stdscr.addstr(row, bw - 1, "│")
-            row += 1
+            if row < box_h - 1:
+                win.addnstr(row, 2, "r", iw, curses.A_BOLD)
+                win.addstr("=Run  ")
+                win.addstr("c", curses.A_BOLD)
+                win.addstr("=Cancel  ")
+                win.addstr("q", curses.A_BOLD)
+                win.addstr("=Quit")
 
-            stdscr.addnstr(row, 0, "└" + "─" * (bw - 2) + "┘", maxw - 1)
-
-            stdscr.refresh()
+            win.refresh()
 
     curses.wrapper(_main)
 
