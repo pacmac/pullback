@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import tuning
+from config import load_config
 
 _MB = 1024 * 1024
 
@@ -61,6 +62,21 @@ def _parse(val_str, unit):
             return None, f"Invalid integer: {val_str}"
     else:
         return val_str, None
+
+
+def _find_idx(current, sweep_vals, unit):
+    """Find the index of current value in sweep_vals."""
+    for i, v in enumerate(sweep_vals):
+        if str(v) == str(current):
+            return i
+        # For bytes, compare as ints
+        if unit == "bytes":
+            try:
+                if int(v) == int(current):
+                    return i
+            except (ValueError, TypeError):
+                pass
+    return None
 
 
 def main():
@@ -280,53 +296,91 @@ def main():
         current = live.get(key, "?")
         default = param["default"]
 
-        disp_current = _fmt(current, unit)
-        disp_default = _fmt(default, unit)
-
-        print()
-        print(f"  {key}")
-        print(f"  Current: {disp_current}")
-        print(f"  Default: {disp_default}")
-        print()
-        print(f"  d = set to default ({disp_default})")
         options = param.get("options")
-        if unit == "bool":
-            print(f"  1 = on")
-            print(f"  2 = off")
-        elif unit == "bytes":
-            print(f"  or enter value in MB")
-        elif options:
-            for oi, opt in enumerate(options, 1):
-                marker = " (current)" if str(opt) == str(current) else ""
-                print(f"  {oi} = {opt}{marker}")
-        else:
-            print(f"  or enter a new value")
-        print()
 
-        try:
-            val_input = input("  Value: ").strip()
-        except (EOFError, KeyboardInterrupt):
+        # Build sweep values: options list, or autotune ranges from config
+        sweep_vals = None
+        if options:
+            sweep_vals = options
+        else:
+            cfg = load_config()
+            autotune_cfg = cfg.get("autotune", {})
+            for layer in ["disk", "network", "rsync"]:
+                layer_ranges = autotune_cfg.get(layer, {})
+                if key in layer_ranges:
+                    sweep_vals = layer_ranges[key]
+                    break
+
+        # Param edit loop — stays on this param until empty input
+        while True:
+            # Re-read current value
+            current = tuning.read_live(mount_point).get(key, "?")
+            disp_current = _fmt(current, unit)
+            disp_default = _fmt(default, unit)
+
             print()
-            continue
+            print(f"  {key}")
+            print(f"  Current: {disp_current}")
+            print(f"  Default: {disp_default}")
+            print()
+            print(f"  d = default  > = next  < = prev  enter = back")
+            if unit == "bool":
+                print(f"  1 = on   2 = off")
+            elif unit == "bytes":
+                print(f"  or enter value in MB")
+            elif options:
+                for oi, opt in enumerate(options, 1):
+                    marker = " ◀" if str(opt) == str(current) else ""
+                    print(f"  {oi} = {opt}{marker}")
+            else:
+                print(f"  or enter a new value")
+            if sweep_vals and not options:
+                print(f"  sweep: {[_fmt(v, unit) for v in sweep_vals]}")
+            print()
 
-        if val_input == "":
-            continue
+            try:
+                val_input = input("  Value: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
 
-        if val_input.lower() == "d":
-            new_val = default
-        elif options and val_input.isdigit() and 1 <= int(val_input) <= len(options):
-            new_val = options[int(val_input) - 1]
-        else:
-            new_val, err = _parse(val_input, unit)
-            if err:
-                print(f"  {err}")
-                continue
+            if val_input == "":
+                break
 
-        applied = tuning.apply_values({key: new_val}, mount_point)
-        if applied:
-            print(f"  Applied: {', '.join(applied)}")
-        else:
-            print(f"  Failed to apply {key}={new_val}")
+            if val_input.lower() == "d":
+                new_val = default
+            elif val_input == ">" and sweep_vals:
+                # Find current position and go to next
+                cur_idx = _find_idx(current, sweep_vals, unit)
+                if cur_idx is not None and cur_idx < len(sweep_vals) - 1:
+                    new_val = sweep_vals[cur_idx + 1]
+                elif cur_idx is None:
+                    new_val = sweep_vals[0]
+                else:
+                    print(f"  Already at max")
+                    continue
+            elif val_input == "<" and sweep_vals:
+                cur_idx = _find_idx(current, sweep_vals, unit)
+                if cur_idx is not None and cur_idx > 0:
+                    new_val = sweep_vals[cur_idx - 1]
+                elif cur_idx is None:
+                    new_val = sweep_vals[-1]
+                else:
+                    print(f"  Already at min")
+                    continue
+            elif options and val_input.isdigit() and 1 <= int(val_input) <= len(options):
+                new_val = options[int(val_input) - 1]
+            else:
+                new_val, err = _parse(val_input, unit)
+                if err:
+                    print(f"  {err}")
+                    continue
+
+            applied = tuning.apply_values({key: new_val}, mount_point)
+            if applied:
+                print(f"  Applied: {', '.join(applied)}")
+            else:
+                print(f"  Failed to apply {key}={new_val}")
 
 
 if __name__ == "__main__":
