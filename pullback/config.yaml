@@ -38,7 +38,7 @@ tuning:
   dirty_background_ratio: 1
   dirty_expire_centisecs: 3000
   dirty_writeback_centisecs: 500
-  bdi_strict_limit: 1
+  bdi_strict_limit: 0  # set to 1 when bdi_max_bytes > 0
   bdi_max_bytes: 0  # off — per-drive override via .pullback-tune.yaml
   rps_enabled: true
   rps_cpus: "c"            # CPU mask for RPS (c = CPU2+3, f = all)
