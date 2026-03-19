@@ -824,7 +824,7 @@ def cmd_watch(args):
             lines.append(_box_bot())
 
             # Render — cursor home + overwrite
-            frame = "\033[H\033[J" + "\n".join(lines) + "\n"
+            frame = "\033[H\033[J" + "\r\n".join(lines) + "\r\n"
             sys.stdout.write(frame)
             sys.stdout.flush()
 

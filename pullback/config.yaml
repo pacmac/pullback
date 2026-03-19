@@ -14,7 +14,6 @@ rsync:
     - --numeric-ids
     - --partial
     - --whole-file
-    - --inplace
     - --info=progress2,name1
 
 ssh:
