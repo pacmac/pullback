@@ -27,8 +27,10 @@ class Monitor:
 
     def __init__(self, mount_point="/backup", iface=None):
         self._mount_point = mount_point
-        self._dev = tuning.block_device(mount_point) or "sda"
         self._iface = iface or "eth0"
+
+        # Detect device (re-detected on each sample in case drive changes)
+        self._dev = tuning.block_device(mount_point) or "sda"
 
         # Previous sample for rate calculation
         self._prev_rx = self._read_rx_bytes()
@@ -44,6 +46,13 @@ class Monitor:
         Returns dict: {net_mbs, disk_mbs, dirty_mb, writeback_mb}
         Also persists to rolling window.
         """
+        # Re-detect device in case drive was swapped
+        new_dev = tuning.block_device(self._mount_point) or "sda"
+        if new_dev != self._dev:
+            self._dev = new_dev
+            self._prev_disk = self._read_disk_sectors()
+            self.reset()
+
         curr_rx = self._read_rx_bytes()
         curr_disk = self._read_disk_sectors()
         curr_t = time.time()
