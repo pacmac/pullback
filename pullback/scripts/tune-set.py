@@ -65,6 +65,7 @@ def main():
         print("  0. Exit")
         print("  a. Set ALL to defaults")
         print("  s. Save current values to YAML")
+        print("  l. Load and apply from saved YAML")
         print()
 
         # Prompt for selection
@@ -90,6 +91,39 @@ def main():
             filepath.parent.mkdir(parents=True, exist_ok=True)
             filepath.write_text(tuning.status_yaml(mount_point) + "\n")
             print(f"  Saved to {filepath}")
+            continue
+
+        if choice.lower() == "l":
+            import yaml as _yaml
+            state_dir = Path(__file__).resolve().parent.parent / "state"
+            files = sorted(state_dir.glob("tune-*.yaml"))
+            if not files:
+                print("  No saved files found")
+                continue
+            print()
+            for j, f in enumerate(files, 1):
+                print(f"  {j}. {f.name}")
+            print()
+            try:
+                pick = input("  Select file #: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                continue
+            try:
+                fidx = int(pick) - 1
+                if fidx < 0 or fidx >= len(files):
+                    print("  Invalid selection")
+                    continue
+            except ValueError:
+                print("  Invalid selection")
+                continue
+            with open(files[fidx]) as fh:
+                data = _yaml.safe_load(fh)
+            if data and "tuning" in data:
+                applied = tuning.apply_values(data["tuning"], mount_point)
+                print(f"  Applied {len(applied)} params from {files[fidx].name}")
+            else:
+                print(f"  No tuning section in {files[fidx].name}")
             continue
 
         try:
