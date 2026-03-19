@@ -192,6 +192,8 @@ def main():
                 net_samples = []
                 disk_samples = []
                 dirty_samples = []
+                last_active = time.time()
+                idle_secs = 0
 
                 while True:
                     if select.select([sys.stdin], [], [], 2)[0]:
@@ -217,9 +219,21 @@ def main():
                     prev_disk = curr_disk
                     prev_t = curr_t
 
-                    # Skip zero samples entirely — don't update avg or display
+                    R = "\033[0m"
+                    DIM = "\033[2m"
+
                     if net_mbs == 0 and disk_mbs == 0:
+                        idle_secs = int(curr_t - last_active)
+                        sys.stdout.write(
+                            f"\r  {DIM}{'idle':>8} {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {'--':>8} {'--':>8}  {idle_secs:>4}s{R}  "
+                            f"\n\r  {DIM}{'':>8} {'':>6}   {'':>6}   {'':>8} {'':>8}       {R}  "
+                            f"\033[A"
+                        )
+                        sys.stdout.flush()
                         continue
+
+                    last_active = curr_t
+                    idle_secs = 0
 
                     if net_mbs > 0:
                         net_samples.append(net_mbs)
@@ -232,15 +246,14 @@ def main():
                     avg_disk = sum(disk_samples) // len(disk_samples) if disk_samples else 0
                     avg_dirty = sum(dirty_samples) // len(dirty_samples) if dirty_samples else 0
 
-                    R = "\033[0m"
                     anc = _speed_colour(avg_net)
                     adc = _speed_colour(avg_disk)
                     cnc = _speed_colour(net_mbs)
                     cdc = _speed_colour(disk_mbs)
 
                     sys.stdout.write(
-                        f"\r  {'avg':>8} {avg_dirty:>6}MB {wb_kb//1024:>6}MB {anc}{avg_net:>8}{R} {adc}{avg_disk:>8}{R}  "
-                        f"\n\r  {'now':>8} {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {cnc}{net_mbs:>8}{R} {cdc}{disk_mbs:>8}{R}  "
+                        f"\r  {'avg':>8} {avg_dirty:>6}MB {wb_kb//1024:>6}MB {anc}{avg_net:>8}{R} {adc}{avg_disk:>8}{R}       "
+                        f"\n\r  {'now':>8} {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {cnc}{net_mbs:>8}{R} {cdc}{disk_mbs:>8}{R}       "
                         f"\033[A"
                     )
                     sys.stdout.flush()
