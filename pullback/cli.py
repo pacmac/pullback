@@ -667,7 +667,7 @@ def cmd_watch(args):
         elif s == "OK": return "\033[32m"
         return "\033[37m"
 
-    def _bar(pct, width=30):
+    def _bar(pct, width=25):
         filled = int(width * pct / 100)
         return "█" * filled + "░" * (width - filled)
 
@@ -687,13 +687,12 @@ def cmd_watch(args):
         return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
     def _box_line(content, w=W):
-        stripped = content
         # Remove ANSI codes for length calculation
         import re
         clean = re.sub(r'\033\[[0-9;]*m', '', content)
-        pad = w - 2 - len(clean)
+        pad = w - 4 - len(clean)  # w minus │ + space + space + │
         if pad < 0: pad = 0
-        return f"│ {content}{' ' * pad}│"
+        return f"│ {content}{' ' * pad} │"
 
     def _box_top(title="", w=W):
         if title:
