@@ -50,10 +50,10 @@ class Monitor:
         self._prev_disk = curr_disk
         self._prev_t = curr_t
 
-        # Update averages (exclude zeros)
-        if net_mbs > 0:
+        # Update averages (exclude noise < 6 MB/s)
+        if net_mbs >= 6:
             self._net_samples.append(net_mbs)
-        if disk_mbs > 0:
+        if disk_mbs >= 6:
             self._disk_samples.append(disk_mbs)
         if dirty_kb > 0:
             self._dirty_samples.append(dirty_kb // 1024)
