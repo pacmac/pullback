@@ -54,7 +54,7 @@ tuning:
 autotune:
   dd_size_mb: 512  # dd test file size for write layer
   disk:
-    bdi_max_bytes: [62914560, 83886080, 104857600, 125829120, 167772160, 209715200]
+    bdi_max_bytes: [8388608, 16777216, 25165824, 33554432, 41943040, 50331648]
     dirty_ratio_pairs: [[1,1], [1,2], [2,1], [2,2], [3,1], [3,2], [5,2]]
     dirty_expire_centisecs: [500, 1000, 2000, 3000, 5000]
     dirty_writeback_centisecs: [10, 20, 50, 100, 200]
