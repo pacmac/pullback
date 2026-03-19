@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""tune-set.py — Interactive tuning parameter editor.
+"""tune-set.py — Interactive tuning parameter editor with live monitor.
 
 Reads live values from the OS, lets you select and change them one at a time.
+Sweep mode: > and < step through values with live monitoring after each change.
 """
 
 import sys
@@ -14,18 +15,17 @@ from config import load_config
 
 _MB = 1024 * 1024
 
+
 def _speed_colour(mbs):
-    """Return ANSI colour for MB/s: <50 red, 50-80 orange, >80 green."""
     if mbs < 50:
-        return "\033[31m"    # red
+        return "\033[31m"
     elif mbs <= 80:
-        return "\033[33m"    # orange/yellow
+        return "\033[33m"
     else:
-        return "\033[32m"    # green
+        return "\033[32m"
 
 
 def _fmt(val, unit):
-    """Format a value for display based on unit type."""
     if unit == "bytes":
         if isinstance(val, (int, float)) and val > 0:
             return f"{int(val) // _MB}MB"
@@ -42,7 +42,6 @@ def _fmt(val, unit):
 
 
 def _parse(val_str, unit):
-    """Parse user input based on unit type. Returns (value, error)."""
     if unit == "bytes":
         try:
             return int(float(val_str)) * _MB, None
@@ -65,11 +64,9 @@ def _parse(val_str, unit):
 
 
 def _find_idx(current, sweep_vals, unit):
-    """Find the index of current value in sweep_vals."""
     for i, v in enumerate(sweep_vals):
         if str(v) == str(current):
             return i
-        # For bytes, compare as ints
         if unit == "bytes":
             try:
                 if int(v) == int(current):
@@ -77,6 +74,108 @@ def _find_idx(current, sweep_vals, unit):
             except (ValueError, TypeError):
                 pass
     return None
+
+
+def _run_monitor(mount_point, header=None):
+    """Run live monitor until any key pressed. Returns the key pressed."""
+    import time, select, termios, tty
+
+    iface = "eth0"
+    dev = tuning.block_device(mount_point) or "sda"
+
+    if header:
+        print(f"  {header}")
+    print(f"  {'':>8} {'Dirty':>8} {'WB':>8} {'Net MB/s':>10} {'Disk MB/s':>10}")
+    print(f"  {'':>8} {'─'*8} {'─'*8} {'─'*10} {'─'*10}")
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    key_pressed = ""
+    try:
+        tty.setraw(fd)
+
+        prev_rx = int(tuning._read_sysfs(f"/sys/class/net/{iface}/statistics/rx_bytes") or 0)
+        prev_disk = 0
+        with open("/proc/diskstats") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 10 and parts[2] == dev:
+                    prev_disk = int(parts[9])
+        prev_t = time.time()
+
+        net_samples = []
+        disk_samples = []
+        dirty_samples = []
+        last_active = time.time()
+
+        while True:
+            if select.select([sys.stdin], [], [], 2)[0]:
+                key_pressed = sys.stdin.read(1)
+                break
+
+            curr_rx = int(tuning._read_sysfs(f"/sys/class/net/{iface}/statistics/rx_bytes") or 0)
+            curr_disk = 0
+            with open("/proc/diskstats") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) >= 10 and parts[2] == dev:
+                        curr_disk = int(parts[9])
+            curr_t = time.time()
+            dt = curr_t - prev_t
+
+            dirty_kb = tuning._read_meminfo("Dirty") or 0
+            wb_kb = tuning._read_meminfo("Writeback") or 0
+            net_mbs = int((curr_rx - prev_rx) / _MB / dt) if dt > 0 else 0
+            disk_mbs = int((curr_disk - prev_disk) * 512 / _MB / dt) if dt > 0 else 0
+
+            prev_rx = curr_rx
+            prev_disk = curr_disk
+            prev_t = curr_t
+
+            R = "\033[0m"
+            DIM = "\033[2m"
+
+            if net_mbs == 0 and disk_mbs == 0:
+                idle_secs = int(curr_t - last_active)
+                sys.stdout.write(
+                    f"\r  {DIM}{'idle':>8} {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {'--':>8} {'--':>8}  {idle_secs:>4}s{R}  "
+                    f"\n\r  {DIM}{'':>8} {'':>6}   {'':>6}   {'':>8} {'':>8}       {R}  "
+                    f"\033[A"
+                )
+                sys.stdout.flush()
+                continue
+
+            last_active = curr_t
+
+            if net_mbs > 0:
+                net_samples.append(net_mbs)
+            if disk_mbs > 0:
+                disk_samples.append(disk_mbs)
+            if dirty_kb > 0:
+                dirty_samples.append(dirty_kb // 1024)
+
+            avg_net = sum(net_samples) // len(net_samples) if net_samples else 0
+            avg_disk = sum(disk_samples) // len(disk_samples) if disk_samples else 0
+            avg_dirty = sum(dirty_samples) // len(dirty_samples) if dirty_samples else 0
+
+            anc = _speed_colour(avg_net)
+            adc = _speed_colour(avg_disk)
+            cnc = _speed_colour(net_mbs)
+            cdc = _speed_colour(disk_mbs)
+
+            sys.stdout.write(
+                f"\r  {'avg':>8} {avg_dirty:>6}MB {wb_kb//1024:>6}MB {anc}{avg_net:>8}{R} {adc}{avg_disk:>8}{R}       "
+                f"\n\r  {'now':>8} {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {cnc}{net_mbs:>8}{R} {cdc}{disk_mbs:>8}{R}       "
+                f"\033[A"
+            )
+            sys.stdout.flush()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    print()
+    print()
+    return key_pressed
 
 
 def main():
@@ -104,7 +203,6 @@ def main():
             else:
                 print(f"  {i:>2}. {key:<32} {disp_val:<20} {disp_def}")
 
-        print()
         dirty_kb = tuning._read_meminfo("Dirty") or 0
         wb_kb = tuning._read_meminfo("Writeback") or 0
         print()
@@ -182,103 +280,8 @@ def main():
             continue
 
         if choice.lower() == "m":
-            import time, select, termios, tty
-            iface = "eth0"
-            dev = tuning.block_device(mount_point) or "sda"
             print()
-            print("  Press any key to stop")
-            print(f"  {'':>8} {'Dirty':>8} {'WB':>8} {'Net MB/s':>10} {'Disk MB/s':>10}")
-            print(f"  {'':>8} {'─'*8} {'─'*8} {'─'*10} {'─'*10}")
-
-            fd = sys.stdin.fileno()
-            old_settings = termios.tcgetattr(fd)
-            try:
-                tty.setraw(fd)
-
-                prev_rx = int(tuning._read_sysfs(f"/sys/class/net/{iface}/statistics/rx_bytes") or 0)
-                prev_disk = 0
-                with open("/proc/diskstats") as f:
-                    for line in f:
-                        parts = line.split()
-                        if len(parts) >= 10 and parts[2] == dev:
-                            prev_disk = int(parts[9])
-                prev_t = time.time()
-
-                # Running averages
-                net_samples = []
-                disk_samples = []
-                dirty_samples = []
-                last_active = time.time()
-                idle_secs = 0
-
-                while True:
-                    if select.select([sys.stdin], [], [], 2)[0]:
-                        sys.stdin.read(1)
-                        break
-
-                    curr_rx = int(tuning._read_sysfs(f"/sys/class/net/{iface}/statistics/rx_bytes") or 0)
-                    curr_disk = 0
-                    with open("/proc/diskstats") as f:
-                        for line in f:
-                            parts = line.split()
-                            if len(parts) >= 10 and parts[2] == dev:
-                                curr_disk = int(parts[9])
-                    curr_t = time.time()
-                    dt = curr_t - prev_t
-
-                    dirty_kb = tuning._read_meminfo("Dirty") or 0
-                    wb_kb = tuning._read_meminfo("Writeback") or 0
-                    net_mbs = int((curr_rx - prev_rx) / _MB / dt) if dt > 0 else 0
-                    disk_mbs = int((curr_disk - prev_disk) * 512 / _MB / dt) if dt > 0 else 0
-
-                    prev_rx = curr_rx
-                    prev_disk = curr_disk
-                    prev_t = curr_t
-
-                    R = "\033[0m"
-                    DIM = "\033[2m"
-
-                    if net_mbs == 0 and disk_mbs == 0:
-                        idle_secs = int(curr_t - last_active)
-                        sys.stdout.write(
-                            f"\r  {DIM}{'idle':>8} {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {'--':>8} {'--':>8}  {idle_secs:>4}s{R}  "
-                            f"\n\r  {DIM}{'':>8} {'':>6}   {'':>6}   {'':>8} {'':>8}       {R}  "
-                            f"\033[A"
-                        )
-                        sys.stdout.flush()
-                        continue
-
-                    last_active = curr_t
-                    idle_secs = 0
-
-                    if net_mbs > 0:
-                        net_samples.append(net_mbs)
-                    if disk_mbs > 0:
-                        disk_samples.append(disk_mbs)
-                    if dirty_kb > 0:
-                        dirty_samples.append(dirty_kb // 1024)
-
-                    avg_net = sum(net_samples) // len(net_samples) if net_samples else 0
-                    avg_disk = sum(disk_samples) // len(disk_samples) if disk_samples else 0
-                    avg_dirty = sum(dirty_samples) // len(dirty_samples) if dirty_samples else 0
-
-                    anc = _speed_colour(avg_net)
-                    adc = _speed_colour(avg_disk)
-                    cnc = _speed_colour(net_mbs)
-                    cdc = _speed_colour(disk_mbs)
-
-                    sys.stdout.write(
-                        f"\r  {'avg':>8} {avg_dirty:>6}MB {wb_kb//1024:>6}MB {anc}{avg_net:>8}{R} {adc}{avg_disk:>8}{R}       "
-                        f"\n\r  {'now':>8} {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {cnc}{net_mbs:>8}{R} {cdc}{disk_mbs:>8}{R}       "
-                        f"\033[A"
-                    )
-                    sys.stdout.flush()
-            except KeyboardInterrupt:
-                pass
-            finally:
-                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-            print()
-            print()
+            _run_monitor(mount_point, "Press any key to stop")
             continue
 
         try:
@@ -293,16 +296,12 @@ def main():
         param = registry[idx]
         key = param["key"]
         unit = param.get("unit", "str")
-        current = live.get(key, "?")
         default = param["default"]
-
         options = param.get("options")
 
-        # Build sweep values: options list, or autotune ranges from config
-        sweep_vals = None
-        if options:
-            sweep_vals = options
-        else:
+        # Build sweep values from config autotune ranges
+        sweep_vals = options  # options ARE the sweep for governor/scheduler
+        if not sweep_vals:
             cfg = load_config()
             autotune_cfg = cfg.get("autotune", {})
             for layer in ["disk", "network", "rsync"]:
@@ -311,9 +310,8 @@ def main():
                     sweep_vals = layer_ranges[key]
                     break
 
-        # Param edit loop — stays on this param until empty input
+        # Param edit loop — stays on this param, > and < sweep with monitor
         while True:
-            # Re-read current value
             current = tuning.read_live(mount_point).get(key, "?")
             disp_current = _fmt(current, unit)
             disp_default = _fmt(default, unit)
@@ -322,20 +320,26 @@ def main():
             print(f"  {key}")
             print(f"  Current: {disp_current}")
             print(f"  Default: {disp_default}")
+            if sweep_vals:
+                sweep_display = []
+                for v in sweep_vals:
+                    s = _fmt(v, unit)
+                    if _find_idx(current, [v], unit) is not None:
+                        s = f"[{s}]"
+                    sweep_display.append(s)
+                print(f"  Range: {' '.join(sweep_display)}")
             print()
-            print(f"  d = default  > = next  < = prev  enter = back")
+            print(f"  d=default  >=next  <=prev  enter=back")
             if unit == "bool":
-                print(f"  1 = on   2 = off")
-            elif unit == "bytes":
-                print(f"  or enter value in MB")
+                print(f"  1=on  2=off")
             elif options:
                 for oi, opt in enumerate(options, 1):
                     marker = " ◀" if str(opt) == str(current) else ""
-                    print(f"  {oi} = {opt}{marker}")
+                    print(f"  {oi}={opt}{marker}")
+            elif unit == "bytes":
+                print(f"  or enter value in MB")
             else:
                 print(f"  or enter a new value")
-            if sweep_vals and not options:
-                print(f"  sweep: {[_fmt(v, unit) for v in sweep_vals]}")
             print()
 
             try:
@@ -347,10 +351,11 @@ def main():
             if val_input == "":
                 break
 
+            new_val = None
+
             if val_input.lower() == "d":
                 new_val = default
             elif val_input == ">" and sweep_vals:
-                # Find current position and go to next
                 cur_idx = _find_idx(current, sweep_vals, unit)
                 if cur_idx is not None and cur_idx < len(sweep_vals) - 1:
                     new_val = sweep_vals[cur_idx + 1]
@@ -376,11 +381,48 @@ def main():
                     print(f"  {err}")
                     continue
 
-            applied = tuning.apply_values({key: new_val}, mount_point)
-            if applied:
-                print(f"  Applied: {', '.join(applied)}")
-            else:
-                print(f"  Failed to apply {key}={new_val}")
+            if new_val is not None:
+                applied = tuning.apply_values({key: new_val}, mount_point)
+                if applied:
+                    disp = _fmt(new_val, unit)
+                    print(f"  Applied: {key}={disp}")
+
+                    # After sweep (> or <), auto-start monitor
+                    # Press > or < in monitor to keep sweeping
+                    if val_input in (">", "<"):
+                        key_pressed = _run_monitor(mount_point,
+                            f"{key}={disp}  (> next, < prev, any other key to stop)")
+                        if key_pressed == ">" or key_pressed == "<":
+                            val_input = key_pressed
+                            # Apply next/prev immediately
+                            cur_idx = _find_idx(new_val, sweep_vals, unit)
+                            if key_pressed == ">" and cur_idx is not None and cur_idx < len(sweep_vals) - 1:
+                                new_val = sweep_vals[cur_idx + 1]
+                            elif key_pressed == "<" and cur_idx is not None and cur_idx > 0:
+                                new_val = sweep_vals[cur_idx - 1]
+                            else:
+                                continue
+                            applied = tuning.apply_values({key: new_val}, mount_point)
+                            if applied:
+                                disp = _fmt(new_val, unit)
+                                print(f"  Applied: {key}={disp}")
+                                # Continue monitoring
+                                while key_pressed in (">", "<"):
+                                    key_pressed = _run_monitor(mount_point,
+                                        f"{key}={disp}  (> next, < prev, any other key to stop)")
+                                    if key_pressed in (">", "<"):
+                                        cur_idx = _find_idx(new_val, sweep_vals, unit)
+                                        next_idx = cur_idx + 1 if key_pressed == ">" else cur_idx - 1
+                                        if cur_idx is not None and 0 <= next_idx < len(sweep_vals):
+                                            new_val = sweep_vals[next_idx]
+                                            applied = tuning.apply_values({key: new_val}, mount_point)
+                                            disp = _fmt(new_val, unit)
+                                            print(f"  Applied: {key}={disp}")
+                                        else:
+                                            print(f"  End of range")
+                                            break
+                else:
+                    print(f"  Failed to apply {key}={new_val}")
 
 
 if __name__ == "__main__":
