@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from config import load_config
+from monitor import Monitor
 from state import load_state, get_progress, request_cancel
 import tuning
 
@@ -641,6 +642,207 @@ def cmd_config(args):
         sys.exit(1)
 
 
+# ── Watch — interactive terminal dashboard ───────────
+
+
+def cmd_watch(args):
+    """Live terminal dashboard with keyboard controls."""
+    import select, termios, tty
+
+    cfg = load_config(args.config)
+    mount_point = cfg.get("mount_point", "/backup")
+    iface = cfg.get("tuning", {}).get("net_interface", "eth0")
+    mon = Monitor(mount_point, iface)
+
+    W = 56  # box width
+
+    def _speed_col(mbs):
+        if mbs < 50: return "\033[31m"
+        elif mbs <= 80: return "\033[33m"
+        else: return "\033[32m"
+
+    def _status_col(s):
+        if s == "RUNNING": return "\033[32m"
+        elif s == "FAILED": return "\033[31m"
+        elif s == "OK": return "\033[32m"
+        return "\033[37m"
+
+    def _bar(pct, width=30):
+        filled = int(width * pct / 100)
+        return "█" * filled + "░" * (width - filled)
+
+    def _trunc(s, maxlen):
+        return s[:maxlen-1] + "…" if len(s) > maxlen else s
+
+    def _fmt_bytes(b):
+        if b >= 1024**3: return f"{b/1024**3:.1f} GB"
+        elif b >= 1024**2: return f"{b/1024**2:.0f} MB"
+        elif b >= 1024: return f"{b/1024:.0f} KB"
+        return f"{b} B"
+
+    def _fmt_dur(secs):
+        if not secs: return "--:--"
+        h, m = divmod(int(secs), 3600)
+        m, s = divmod(m, 60)
+        return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+    def _box_line(content, w=W):
+        stripped = content
+        # Remove ANSI codes for length calculation
+        import re
+        clean = re.sub(r'\033\[[0-9;]*m', '', content)
+        pad = w - 2 - len(clean)
+        if pad < 0: pad = 0
+        return f"│ {content}{' ' * pad}│"
+
+    def _box_top(title="", w=W):
+        if title:
+            return f"┌─ {title} " + "─" * (w - 4 - len(title)) + "┐"
+        return "┌" + "─" * (w - 2) + "┐"
+
+    def _box_mid(w=W):
+        return "├" + "─" * (w - 2) + "┤"
+
+    def _box_bot(w=W):
+        return "└" + "─" * (w - 2) + "┘"
+
+    R = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+
+    try:
+        tty.setraw(fd)
+        # Hide cursor
+        sys.stdout.write("\033[?25l")
+        sys.stdout.flush()
+
+        while True:
+            # Check for keypress
+            if select.select([sys.stdin], [], [], 2)[0]:
+                key = sys.stdin.read(1)
+                if key == "q" or key == "\x03":  # q or Ctrl+C
+                    break
+                elif key == "r":
+                    # Restore terminal for subprocess
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                    _run_sync_bg(cfg)
+                    tty.setraw(fd)
+                elif key == "c":
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                    for name in cfg["sources"]:
+                        request_cancel(name)
+                    tty.setraw(fd)
+
+            # Sample stats
+            s = mon.sample()
+            a = mon.averages()
+
+            # Read progress
+            lines = []
+            lines.append(_box_top("pullback"))
+
+            for src_name, src_cfg in cfg["sources"].items():
+                state = load_state(src_name)
+                progress = get_progress(src_name)
+                is_running = progress and progress.get("source")
+
+                # Status
+                if is_running:
+                    status = "RUNNING"
+                elif state.get("last_run_success") is True:
+                    status = "OK"
+                elif state.get("last_run_success") is False:
+                    status = "FAILED"
+                else:
+                    status = "IDLE"
+
+                sc = _status_col(status)
+                host = src_cfg.get("host", "")
+                lines.append(_box_line(f"{BOLD}{src_name}{R} ({host}){' ' * 20}{sc}{status}{R}"))
+
+                if is_running:
+                    pct = progress.get("overall_pct", 0)
+                    eta = progress.get("eta", "--")
+                    bar = _bar(pct)
+                    lines.append(_box_line(f"{bar}  {pct}%  ETA {eta}"))
+
+                    cur_file = progress.get("current_file", "")
+                    step = progress.get("step", "")
+                    lines.append(_box_line(f"{DIM}{_trunc(cur_file or step, W-4)}{R}"))
+
+                    transferred = progress.get("bytes_transferred", 0)
+                    elapsed = progress.get("elapsed", 0)
+                    lines.append(_box_line(
+                        f"{_fmt_bytes(transferred)} transferred  •  {_fmt_dur(elapsed)} elapsed"
+                    ))
+                else:
+                    last = state.get("last_success_at") or state.get("last_run_started_at")
+                    dur = state.get("last_sync_duration", 0)
+                    if last:
+                        last_short = last[:19].replace("T", " ")
+                        lines.append(_box_line(f"{DIM}Last: {last_short}  •  {_fmt_dur(dur)}{R}"))
+                    err = state.get("last_error")
+                    if err:
+                        lines.append(_box_line(f"\033[31m{_trunc(err, W-4)}{R}"))
+
+            # Stats section
+            lines.append(_box_mid())
+
+            nc = _speed_col(s["net_mbs"])
+            dc = _speed_col(s["disk_mbs"])
+            nac = _speed_col(a["net_avg"])
+            dac = _speed_col(a["disk_avg"])
+
+            lines.append(_box_line(
+                f"Net   {nac}avg {a['net_avg']:>3}{R} MB/s  {nc}now {s['net_mbs']:>3}{R} MB/s"
+            ))
+            lines.append(_box_line(
+                f"Disk  {dac}avg {a['disk_avg']:>3}{R} MB/s  {dc}now {s['disk_mbs']:>3}{R} MB/s"
+            ))
+            lines.append(_box_line(
+                f"Dirty {s['dirty_mb']}MB  •  Writeback {s['writeback_mb']}MB"
+            ))
+
+            # Volume info
+            try:
+                st = os.statvfs(mount_point)
+                total_gb = st.f_blocks * st.f_frsize / 1024**3
+                free_gb = st.f_bavail * st.f_frsize / 1024**3
+                lines.append(_box_line(f"Volume: {free_gb:.1f} TB free / {total_gb:.1f} TB"))
+            except OSError:
+                lines.append(_box_line("Volume: not mounted"))
+
+            # Controls
+            lines.append(_box_mid())
+            lines.append(_box_line(f"{DIM}r=Run  c=Cancel  t=Tune  q=Quit{R}"))
+            lines.append(_box_bot())
+
+            # Render — cursor home + overwrite
+            frame = "\033[H\033[J" + "\n".join(lines) + "\n"
+            sys.stdout.write(frame)
+            sys.stdout.flush()
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # Show cursor, restore terminal
+        sys.stdout.write("\033[?25h")
+        sys.stdout.flush()
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        print()
+
+
+def _run_sync_bg(cfg):
+    """Launch sync in background."""
+    venv_python = str(PROJECT_DIR / "venv" / "bin" / "python3")
+    engine = str(PROJECT_DIR / "engine.py")
+    cmd = ["systemd-run", "--scope", "--quiet", venv_python, engine]
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def main():
     parser = argparse.ArgumentParser(description="pullback backup CLI")
     parser.add_argument("--config", default=None, help="Path to config.yaml")
@@ -656,6 +858,8 @@ def main():
 
     p_cancel = sub.add_parser("cancel", help="Cancel running sync")
     p_cancel.add_argument("--source", required=True)
+
+    sub.add_parser("watch", help="Live terminal dashboard")
 
     p_config = sub.add_parser("config", help="Show loaded config")
     p_config.add_argument("--dump", action="store_true", help="Output as YAML")
@@ -685,6 +889,7 @@ def main():
         "sync": cmd_sync,
         "status": cmd_status,
         "cancel": cmd_cancel,
+        "watch": cmd_watch,
         "config": cmd_config,
         "tune": cmd_tune,
     }
