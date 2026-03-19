@@ -80,6 +80,10 @@ def main():
                 print(f"  {i:>2}. {key:<32} {disp_val:<20} {disp_def}")
 
         print()
+        dirty_kb = tuning._read_meminfo("Dirty") or 0
+        wb_kb = tuning._read_meminfo("Writeback") or 0
+        print()
+        print(f"  Dirty: {dirty_kb//1024}MB   Writeback: {wb_kb//1024}MB")
         print()
         print("  q. Quit")
         print("  a. Set ALL to defaults")
@@ -146,14 +150,20 @@ def main():
             continue
 
         if choice.lower() == "m":
-            import time
+            import time, select, termios, tty
             iface = "eth0"
             dev = tuning.block_device(mount_point) or "sda"
             print()
-            print("  Ctrl+C to stop")
+            print("  Press any key to stop")
             print(f"  {'Dirty':>8} {'WB':>8} {'Net MB/s':>10} {'Disk MB/s':>10}")
             print(f"  {'─'*8} {'─'*8} {'─'*10} {'─'*10}")
+
+            # Set terminal to raw mode so we can detect any keypress
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
             try:
+                tty.setraw(fd)
+
                 prev_rx = int(tuning._read_sysfs(f"/sys/class/net/{iface}/statistics/rx_bytes") or 0)
                 prev_disk = 0
                 with open("/proc/diskstats") as f:
@@ -164,7 +174,11 @@ def main():
                 prev_t = time.time()
 
                 while True:
-                    time.sleep(2)
+                    # Check for keypress (non-blocking)
+                    if select.select([sys.stdin], [], [], 2)[0]:
+                        sys.stdin.read(1)
+                        break
+
                     curr_rx = int(tuning._read_sysfs(f"/sys/class/net/{iface}/statistics/rx_bytes") or 0)
                     curr_disk = 0
                     with open("/proc/diskstats") as f:
@@ -187,7 +201,10 @@ def main():
                     prev_disk = curr_disk
                     prev_t = curr_t
             except KeyboardInterrupt:
-                print()
+                pass
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            print()
             continue
 
         try:
