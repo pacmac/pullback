@@ -34,8 +34,8 @@ email:
 
 tuning:
   net_interface: eth0
-  dirty_ratio: 5
-  dirty_background_ratio: 2
+  dirty_ratio: 2
+  dirty_background_ratio: 1
   dirty_expire_centisecs: 3000
   dirty_writeback_centisecs: 500
   bdi_max_bytes: 0  # off — BDI hurts this drive, per-drive override via .pullback-tune.yaml
