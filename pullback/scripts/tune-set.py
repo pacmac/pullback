@@ -213,6 +213,14 @@ def main():
                     net_mbs = int((curr_rx - prev_rx) / _MB / dt) if dt > 0 else 0
                     disk_mbs = int((curr_disk - prev_disk) * 512 / _MB / dt) if dt > 0 else 0
 
+                    prev_rx = curr_rx
+                    prev_disk = curr_disk
+                    prev_t = curr_t
+
+                    # Skip zero samples entirely — don't update avg or display
+                    if net_mbs == 0 and disk_mbs == 0:
+                        continue
+
                     if net_mbs > 0:
                         net_samples.append(net_mbs)
                     if disk_mbs > 0:
@@ -233,13 +241,9 @@ def main():
                     sys.stdout.write(
                         f"\r  {'avg':>8} {avg_dirty:>6}MB {wb_kb//1024:>6}MB {anc}{avg_net:>8}{R} {adc}{avg_disk:>8}{R}  "
                         f"\n\r  {'now':>8} {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {cnc}{net_mbs:>8}{R} {cdc}{disk_mbs:>8}{R}  "
-                        f"\033[A"  # move cursor back up one line
+                        f"\033[A"
                     )
                     sys.stdout.flush()
-
-                    prev_rx = curr_rx
-                    prev_disk = curr_disk
-                    prev_t = curr_t
             except KeyboardInterrupt:
                 pass
             finally:
