@@ -477,23 +477,3 @@ def _read_meminfo(field):
 # ── CLI ─────────────────────────────────────────────────
 
 
-if __name__ == "__main__":
-    import sys
-
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
-
-    if cmd == "status":
-        print(status_report())
-    elif cmd == "yaml":
-        print(status_yaml())
-    elif cmd == "apply":
-        from config import load_config
-        cfg = load_config()
-        applied = apply_tuning("/backup", cfg)
-        print(f"Applied {len(applied)} params")
-    elif cmd == "defaults":
-        applied = apply_defaults()
-        print(f"Reset {len(applied)} params to defaults")
-    else:
-        print(f"Usage: {sys.argv[0]} [status|yaml|apply|defaults]")
-        sys.exit(1)
