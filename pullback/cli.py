@@ -811,7 +811,10 @@ def cmd_watch(args):
                 st = os.statvfs(mount_point)
                 total_gb = st.f_blocks * st.f_frsize / 1024**3
                 free_gb = st.f_bavail * st.f_frsize / 1024**3
-                lines.append(_box_line(f"Volume: {free_gb:.1f} TB free / {total_gb:.1f} TB"))
+                if total_gb >= 1024:
+                    lines.append(_box_line(f"Volume: {free_gb/1024:.1f} TB free / {total_gb/1024:.1f} TB"))
+                else:
+                    lines.append(_box_line(f"Volume: {free_gb:.0f} GB free / {total_gb:.0f} GB"))
             except OSError:
                 lines.append(_box_line("Volume: not mounted"))
 
