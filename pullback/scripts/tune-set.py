@@ -80,23 +80,12 @@ def main():
                 print(f"  {i:>2}. {key:<32} {disp_val:<20} {disp_def}")
 
         print()
-        # Live stats
-        dirty_kb = tuning._read_meminfo("Dirty")
-        wb_kb = tuning._read_meminfo("Writeback")
-        dirty_mb = dirty_kb // 1024 if dirty_kb else 0
-        wb_mb = wb_kb // 1024 if wb_kb else 0
-
-        dev = tuning.block_device(mount_point)
-        iface = "eth0"
-        net_rx = tuning._read_sysfs(f"/sys/class/net/{iface}/statistics/rx_bytes")
-        net_rx_mb = int(net_rx) // _MB if net_rx and net_rx.isdigit() else 0
-
-        print(f"  ── Live: Dirty={dirty_mb}MB  Writeback={wb_mb}MB  Net RX={net_rx_mb}MB ──")
         print()
         print("  q. Quit")
         print("  a. Set ALL to defaults")
         print("  s. Save current values to YAML")
         print("  l. Load and apply from saved YAML")
+        print("  m. Monitor live stats (Ctrl+C to stop)")
         print()
 
         try:
@@ -154,6 +143,51 @@ def main():
                 print(f"  Applied {len(applied)} params from {files[fidx].name}")
             else:
                 print(f"  No tuning section in {files[fidx].name}")
+            continue
+
+        if choice.lower() == "m":
+            import time
+            iface = "eth0"
+            dev = tuning.block_device(mount_point) or "sda"
+            print()
+            print("  Ctrl+C to stop")
+            print(f"  {'Dirty':>8} {'WB':>8} {'Net MB/s':>10} {'Disk MB/s':>10}")
+            print(f"  {'─'*8} {'─'*8} {'─'*10} {'─'*10}")
+            try:
+                prev_rx = int(tuning._read_sysfs(f"/sys/class/net/{iface}/statistics/rx_bytes") or 0)
+                prev_disk = 0
+                with open("/proc/diskstats") as f:
+                    for line in f:
+                        parts = line.split()
+                        if len(parts) >= 10 and parts[2] == dev:
+                            prev_disk = int(parts[9])
+                prev_t = time.time()
+
+                while True:
+                    time.sleep(2)
+                    curr_rx = int(tuning._read_sysfs(f"/sys/class/net/{iface}/statistics/rx_bytes") or 0)
+                    curr_disk = 0
+                    with open("/proc/diskstats") as f:
+                        for line in f:
+                            parts = line.split()
+                            if len(parts) >= 10 and parts[2] == dev:
+                                curr_disk = int(parts[9])
+                    curr_t = time.time()
+                    dt = curr_t - prev_t
+
+                    dirty_kb = tuning._read_meminfo("Dirty") or 0
+                    wb_kb = tuning._read_meminfo("Writeback") or 0
+                    net_mbs = int((curr_rx - prev_rx) / _MB / dt) if dt > 0 else 0
+                    disk_mbs = int((curr_disk - prev_disk) * 512 / _MB / dt) if dt > 0 else 0
+
+                    sys.stdout.write(f"\r  {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {net_mbs:>8} {disk_mbs:>8}  ")
+                    sys.stdout.flush()
+
+                    prev_rx = curr_rx
+                    prev_disk = curr_disk
+                    prev_t = curr_t
+            except KeyboardInterrupt:
+                print()
             continue
 
         try:
