@@ -80,6 +80,19 @@ def main():
                 print(f"  {i:>2}. {key:<32} {disp_val:<20} {disp_def}")
 
         print()
+        # Live stats
+        dirty_kb = tuning._read_meminfo("Dirty")
+        wb_kb = tuning._read_meminfo("Writeback")
+        dirty_mb = dirty_kb // 1024 if dirty_kb else 0
+        wb_mb = wb_kb // 1024 if wb_kb else 0
+
+        dev = tuning.block_device(mount_point)
+        iface = "eth0"
+        net_rx = tuning._read_sysfs(f"/sys/class/net/{iface}/statistics/rx_bytes")
+        net_rx_mb = int(net_rx) // _MB if net_rx and net_rx.isdigit() else 0
+
+        print(f"  ── Live: Dirty={dirty_mb}MB  Writeback={wb_mb}MB  Net RX={net_rx_mb}MB ──")
+        print()
         print("  q. Quit")
         print("  a. Set ALL to defaults")
         print("  s. Save current values to YAML")
