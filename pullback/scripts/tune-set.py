@@ -387,8 +387,11 @@ def main():
                     disp = _fmt(new_val, unit)
                     print(f"  Applied: {key}={disp}")
 
-                    # After > or <, enter sweep-monitor loop
-                    if val_input in (">", "<") and sweep_vals:
+                    # After > or <, enter sweep-monitor loop — stay on param
+                    if val_input not in (">", "<"):
+                        break  # back to main list
+
+                    if sweep_vals:
                         while True:
                             kp = _run_monitor(mount_point,
                                 f"{key}={disp}  (> next, < prev, any other key to stop)")
