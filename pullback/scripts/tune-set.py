@@ -387,40 +387,22 @@ def main():
                     disp = _fmt(new_val, unit)
                     print(f"  Applied: {key}={disp}")
 
-                    # After sweep (> or <), auto-start monitor
-                    # Press > or < in monitor to keep sweeping
-                    if val_input in (">", "<"):
-                        key_pressed = _run_monitor(mount_point,
-                            f"{key}={disp}  (> next, < prev, any other key to stop)")
-                        if key_pressed == ">" or key_pressed == "<":
-                            val_input = key_pressed
-                            # Apply next/prev immediately
+                    # After > or <, enter sweep-monitor loop
+                    if val_input in (">", "<") and sweep_vals:
+                        while True:
+                            kp = _run_monitor(mount_point,
+                                f"{key}={disp}  (> next, < prev, any other key to stop)")
+                            if kp not in (">", "<"):
+                                break
                             cur_idx = _find_idx(new_val, sweep_vals, unit)
-                            if key_pressed == ">" and cur_idx is not None and cur_idx < len(sweep_vals) - 1:
-                                new_val = sweep_vals[cur_idx + 1]
-                            elif key_pressed == "<" and cur_idx is not None and cur_idx > 0:
-                                new_val = sweep_vals[cur_idx - 1]
-                            else:
-                                continue
-                            applied = tuning.apply_values({key: new_val}, mount_point)
-                            if applied:
-                                disp = _fmt(new_val, unit)
-                                print(f"  Applied: {key}={disp}")
-                                # Continue monitoring
-                                while key_pressed in (">", "<"):
-                                    key_pressed = _run_monitor(mount_point,
-                                        f"{key}={disp}  (> next, < prev, any other key to stop)")
-                                    if key_pressed in (">", "<"):
-                                        cur_idx = _find_idx(new_val, sweep_vals, unit)
-                                        next_idx = cur_idx + 1 if key_pressed == ">" else cur_idx - 1
-                                        if cur_idx is not None and 0 <= next_idx < len(sweep_vals):
-                                            new_val = sweep_vals[next_idx]
-                                            applied = tuning.apply_values({key: new_val}, mount_point)
-                                            disp = _fmt(new_val, unit)
-                                            print(f"  Applied: {key}={disp}")
-                                        else:
-                                            print(f"  End of range")
-                                            break
+                            next_idx = (cur_idx + 1) if kp == ">" else (cur_idx - 1)
+                            if cur_idx is None or next_idx < 0 or next_idx >= len(sweep_vals):
+                                print(f"  End of range")
+                                break
+                            new_val = sweep_vals[next_idx]
+                            tuning.apply_values({key: new_val}, mount_point)
+                            disp = _fmt(new_val, unit)
+                            print(f"  Applied: {key}={disp}")
                 else:
                     print(f"  Failed to apply {key}={new_val}")
 
