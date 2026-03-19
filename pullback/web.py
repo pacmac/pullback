@@ -9,15 +9,18 @@ from pathlib import Path
 
 from config import load_config
 from state import load_state, get_progress, request_cancel
+from monitor import Monitor
+import tuning
 
 
 _BASE = Path(__file__).parent
 _STATIC = _BASE / "static"
 _cfg = None
+_monitor = None  # initialised in main()
 
-# System stats snapshots for delta calculation
-_sys_prev = {"time": 0, "cpu_idle": 0, "cpu_total": 0, "disk_sectors": 0, "rx": 0, "tx": 0}
-_sys_cache = {"cpu_pct": 0, "disk_mb_s": 0, "net_mb_s": 0}
+# CPU stats (not in monitor.py — CPU is web-only)
+_cpu_prev = {"time": 0, "idle": 0, "total": 0}
+_cpu_cache = 0
 
 
 def _read_int(path, default=0):
@@ -28,32 +31,20 @@ def _read_int(path, default=0):
         return default
 
 
-def _get_backup_disk():
-    """Find the block device name backing the backup mount point."""
-    try:
-        mount = _cfg["mount_point"]
-        result = subprocess.run(
-            ["df", mount], capture_output=True, text=True, timeout=5
-        )
-        if result.returncode == 0:
-            lines = result.stdout.strip().split("\n")
-            if len(lines) >= 2:
-                dev = lines[1].split()[0]  # e.g. /dev/sdb
-                return os.path.basename(dev)  # e.g. sdb
-    except (OSError, KeyError, subprocess.TimeoutExpired):
-        pass
-    return None
-
-
 def _get_system_stats():
-    """Collect system stats from /proc. Returns cached values, updates every 2s."""
-    global _sys_prev, _sys_cache
+    """Collect system stats. Uses monitor.py for disk/net/dirty, local for CPU/volume."""
+    global _cpu_prev, _cpu_cache, _monitor
 
+    if _monitor is None:
+        iface = _cfg.get("tuning", {}).get("net_interface", "eth0")
+        _monitor = Monitor(_cfg["mount_point"], iface)
+
+    # Sample disk/net/dirty via monitor
+    s = _monitor.sample()
+    a = _monitor.averages()
+
+    # CPU from /proc/stat (not in monitor — web-specific)
     now = time.time()
-    if now - _sys_prev["time"] < 2:
-        return _sys_cache
-
-    # CPU from /proc/stat
     try:
         with open("/proc/stat") as f:
             parts = f.readline().split()
@@ -62,86 +53,61 @@ def _get_system_stats():
     except (OSError, ValueError, IndexError):
         cpu_total = cpu_idle = 0
 
-    # Disk from /proc/diskstats — find the device backing /backup
-    disk_sectors = 0
-    try:
-        disk_dev = _get_backup_disk()
-        if disk_dev:
-            with open("/proc/diskstats") as f:
-                for line in f:
-                    fields = line.split()
-                    if len(fields) >= 10 and fields[2] == disk_dev:
-                        disk_sectors = int(fields[5]) + int(fields[9])
-                        break
-    except (OSError, ValueError):
-        pass
+    if _cpu_prev["time"] > 0:
+        dt_total = cpu_total - _cpu_prev["total"]
+        dt_idle = cpu_idle - _cpu_prev["idle"]
+        _cpu_cache = round(100 - (dt_idle * 100 / max(dt_total, 1)))
 
-    # Network
-    rx = _read_int("/sys/class/net/eth0/statistics/rx_bytes")
-    tx = _read_int("/sys/class/net/eth0/statistics/tx_bytes")
+    _cpu_prev = {"time": now, "idle": cpu_idle, "total": cpu_total}
 
-    # Calculate deltas
-    dt = now - _sys_prev["time"] if _sys_prev["time"] > 0 else 1
-    if dt > 0 and _sys_prev["time"] > 0:
-        cpu_delta_total = cpu_total - _sys_prev["cpu_total"]
-        cpu_delta_idle = cpu_idle - _sys_prev["cpu_idle"]
-        _sys_cache["cpu_pct"] = round(100 - (cpu_delta_idle * 100 / max(cpu_delta_total, 1)))
-
-        disk_delta = disk_sectors - _sys_prev["disk_sectors"]
-        _sys_cache["disk_mb_s"] = round(disk_delta * 512 / 1024 / 1024 / dt)
-
-        net_delta = (rx - _sys_prev["rx"]) + (tx - _sys_prev["tx"])
-        _sys_cache["net_mb_s"] = round(net_delta / 1024 / 1024 / dt)
-
-    _sys_prev = {"time": now, "cpu_idle": cpu_idle, "cpu_total": cpu_total,
-                 "disk_sectors": disk_sectors, "rx": rx, "tx": tx}
-
-    # Dirty pages
-    try:
-        with open("/proc/meminfo") as f:
-            for line in f:
-                if line.startswith("Dirty:"):
-                    _sys_cache["dirty_mb"] = int(line.split()[1]) // 1024
-                    break
-    except (OSError, ValueError):
-        _sys_cache["dirty_mb"] = 0
+    result = {
+        "cpu_pct": _cpu_cache,
+        "disk_mb_s": s["disk_mbs"],
+        "net_mb_s": s["net_mbs"],
+        "disk_avg": a["disk_avg"],
+        "net_avg": a["net_avg"],
+        "dirty_mb": s["dirty_mb"],
+        "dirty_avg": a["dirty_avg"],
+    }
 
     # RX dropped packets
-    _sys_cache["rx_dropped"] = _read_int("/sys/class/net/eth0/statistics/rx_dropped")
+    iface = _cfg.get("tuning", {}).get("net_interface", "eth0")
+    result["rx_dropped"] = _read_int(f"/sys/class/net/{iface}/statistics/rx_dropped")
 
-    # NET_RX softirq distribution (delta-based, not cumulative)
+    # NET_RX softirq distribution
     try:
         with open("/proc/softirqs") as f:
             for line in f:
                 if "NET_RX" in line:
                     parts = line.split()
                     cpus = [int(x) for x in parts[1:]]
-                    prev_cpus = _sys_prev.get("softirq_cpus")
+                    prev_cpus = getattr(_get_system_stats, "_softirq_prev", None)
                     if prev_cpus and len(prev_cpus) == len(cpus):
                         deltas = [c - p for c, p in zip(cpus, prev_cpus)]
                         delta_total = sum(deltas)
-                        cpu0_pct = round(deltas[0] * 100 / max(delta_total, 1)) if delta_total > 0 else 0
-                        _sys_cache["softirq_cpu0_pct"] = cpu0_pct
-                    _sys_prev["softirq_cpus"] = cpus
+                        result["softirq_cpu0_pct"] = round(deltas[0] * 100 / max(delta_total, 1)) if delta_total > 0 else 0
+                    else:
+                        result["softirq_cpu0_pct"] = 0
+                    _get_system_stats._softirq_prev = cpus
                     break
     except (OSError, ValueError):
-        _sys_cache["softirq_cpu0_pct"] = 0
+        result["softirq_cpu0_pct"] = 0
 
     # Volume info
     mount = _cfg["mount_point"]
     flag = Path(mount) / _cfg["usb"]["flag_file"]
-    _sys_cache["volume_mounted"] = flag.exists()
+    result["volume_mounted"] = flag.exists()
     try:
         st = os.statvfs(mount)
         total = st.f_blocks * st.f_frsize
         free = st.f_bavail * st.f_frsize
-        _sys_cache["volume_total_gb"] = round(total / 1024**3)
-        _sys_cache["volume_free_gb"] = round(free / 1024**3)
+        result["volume_total_gb"] = round(total / 1024**3)
+        result["volume_free_gb"] = round(free / 1024**3)
     except OSError:
-        _sys_cache["volume_total_gb"] = 0
-        _sys_cache["volume_free_gb"] = 0
+        result["volume_total_gb"] = 0
+        result["volume_free_gb"] = 0
 
-    return _sys_cache
+    return result
 
 
 def _get_status():

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from config import load_config
+from monitor import Monitor
 from state import (
     load_state, save_state,
     update_progress, clear_progress,
@@ -82,8 +83,9 @@ def run_folder(source_name, source_cfg, folder_cfg, cfg, state):
 
     # Progress callback — writes to state/progress/ and console
     sync_start = time.time()
-    last_bytes = [0]  # track for smoothed ETA
     smoothed_eta = [""]
+    iface = cfg.get("tuning", {}).get("net_interface", "eth0")
+    mon = Monitor(cfg["mount_point"], iface)
 
     def on_progress(p):
         p["step"] = f"syncing {folder_path}"
@@ -100,11 +102,19 @@ def run_folder(source_name, source_cfg, folder_cfg, cfg, state):
                 total_est = transferred * 100 / pct
                 remaining_bytes = total_est - transferred
                 remaining_secs = remaining_bytes / avg_speed
-                # Blend with previous ETA to dampen swings
                 mins, secs = divmod(int(remaining_secs), 60)
                 hours, mins = divmod(mins, 60)
                 smoothed_eta[0] = f"{hours}:{mins:02d}:{secs:02d}"
         p["eta"] = smoothed_eta[0]
+
+        # Add monitor stats (actual system measurements)
+        s = mon.sample()
+        a = mon.averages()
+        p["net_mbs"] = s["net_mbs"]
+        p["disk_mbs"] = s["disk_mbs"]
+        p["dirty_mb"] = s["dirty_mb"]
+        p["net_avg"] = a["net_avg"]
+        p["disk_avg"] = a["disk_avg"]
 
         update_progress(source_name, p)
         # Live console progress
