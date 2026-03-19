@@ -36,9 +36,9 @@ def _speed_colour(mbs):
 def _fmt(val, unit):
     if unit == "bytes":
         if isinstance(val, (int, float)) and val > 0:
-            return f"{int(val) // _MB}MB"
+            return f"{round(int(val) / _MB)}MB"
         if isinstance(val, str) and val.isdigit() and int(val) > 0:
-            return f"{int(val) // _MB}MB"
+            return f"{round(int(val) / _MB)}MB"
         return "0MB" if val == 0 or val == "0" else str(val)
     elif unit == "bool":
         if isinstance(val, bool):
