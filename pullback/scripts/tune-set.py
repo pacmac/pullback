@@ -213,13 +213,16 @@ def main():
                     net_mbs = int((curr_rx - prev_rx) / _MB / dt) if dt > 0 else 0
                     disk_mbs = int((curr_disk - prev_disk) * 512 / _MB / dt) if dt > 0 else 0
 
-                    net_samples.append(net_mbs)
-                    disk_samples.append(disk_mbs)
-                    dirty_samples.append(dirty_kb // 1024)
+                    if net_mbs > 0:
+                        net_samples.append(net_mbs)
+                    if disk_mbs > 0:
+                        disk_samples.append(disk_mbs)
+                    if dirty_kb > 0:
+                        dirty_samples.append(dirty_kb // 1024)
 
-                    avg_net = sum(net_samples) // len(net_samples)
-                    avg_disk = sum(disk_samples) // len(disk_samples)
-                    avg_dirty = sum(dirty_samples) // len(dirty_samples)
+                    avg_net = sum(net_samples) // len(net_samples) if net_samples else 0
+                    avg_disk = sum(disk_samples) // len(disk_samples) if disk_samples else 0
+                    avg_dirty = sum(dirty_samples) // len(dirty_samples) if dirty_samples else 0
 
                     R = "\033[0m"
                     anc = _speed_colour(avg_net)
