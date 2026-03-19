@@ -646,33 +646,13 @@ def cmd_config(args):
 
 
 def cmd_watch(args):
-    """Live terminal dashboard with keyboard controls."""
-    import select, termios, tty
+    """Live terminal dashboard using curses."""
+    import curses
 
     cfg = load_config(args.config)
     mount_point = cfg.get("mount_point", "/backup")
     iface = cfg.get("tuning", {}).get("net_interface", "eth0")
     mon = Monitor(mount_point, iface)
-
-    W = 56  # box width
-
-    def _speed_col(mbs):
-        if mbs < 50: return "\033[31m"
-        elif mbs <= 80: return "\033[33m"
-        else: return "\033[32m"
-
-    def _status_col(s):
-        if s == "RUNNING": return "\033[32m"
-        elif s == "FAILED": return "\033[31m"
-        elif s == "OK": return "\033[32m"
-        return "\033[37m"
-
-    def _bar(pct, width=25):
-        filled = int(width * pct / 100)
-        return "#" * filled + "-" * (width - filled)
-
-    def _trunc(s, maxlen):
-        return s[:maxlen-1] + "…" if len(s) > maxlen else s
 
     def _fmt_bytes(b):
         if b >= 1024**3: return f"{b/1024**3:.1f} GB"
@@ -686,155 +666,196 @@ def cmd_watch(args):
         m, s = divmod(m, 60)
         return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
-    def _box_line(content, w=W):
-        # Remove ANSI codes for length calculation
-        import re
-        clean = re.sub(r'\033\[[0-9;]*m', '', content)
-        pad = w - 4 - len(clean)  # w minus │ + space + space + │
-        if pad < 0: pad = 0
-        return f"│ {content}{' ' * pad} │"
+    def _speed_pair(mbs):
+        if mbs >= 80: return 3  # green
+        elif mbs >= 50: return 2  # yellow
+        return 1  # red
 
-    def _box_top(title="", w=W):
-        if title:
-            return f"┌─ {title} " + "─" * (w - 4 - len(title)) + "┐"
-        return "┌" + "─" * (w - 2) + "┐"
+    def _main(stdscr):
+        curses.curs_set(0)
+        stdscr.nodelay(True)
+        stdscr.timeout(2000)
 
-    def _box_mid(w=W):
-        return "├" + "─" * (w - 2) + "┤"
-
-    def _box_bot(w=W):
-        return "└" + "─" * (w - 2) + "┘"
-
-    R = "\033[0m"
-    BOLD = "\033[1m"
-    DIM = "\033[2m"
-
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
-
-    try:
-        tty.setraw(fd)
-        # Hide cursor
-        sys.stdout.write("\033[?25l")
-        sys.stdout.flush()
+        # Colours
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_RED, -1)
+        curses.init_pair(2, curses.COLOR_YELLOW, -1)
+        curses.init_pair(3, curses.COLOR_GREEN, -1)
+        curses.init_pair(4, curses.COLOR_CYAN, -1)
+        curses.init_pair(5, curses.COLOR_WHITE, -1)
+        curses.init_pair(6, curses.COLOR_RED, -1)     # failed
+        curses.init_pair(7, curses.COLOR_GREEN, -1)    # bar fill
+        curses.init_pair(8, 8, -1) if curses.COLORS >= 16 else None  # dim
 
         while True:
-            # Check for keypress
-            if select.select([sys.stdin], [], [], 2)[0]:
-                key = sys.stdin.read(1)
-                if key == "q" or key == "\x03":  # q or Ctrl+C
-                    break
-                elif key == "r":
-                    # Restore terminal for subprocess
-                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-                    _run_sync_bg(cfg)
-                    tty.setraw(fd)
-                elif key == "c":
-                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-                    for name in cfg["sources"]:
-                        request_cancel(name)
-                    tty.setraw(fd)
+            key = stdscr.getch()
+            if key == ord("q") or key == 3:  # q or Ctrl+C
+                break
+            elif key == ord("r"):
+                _run_sync_bg(cfg)
+            elif key == ord("c"):
+                for name in cfg["sources"]:
+                    request_cancel(name)
 
-            # Sample stats
             s = mon.sample()
             a = mon.averages()
 
-            # Read progress
-            lines = []
-            lines.append(_box_top("pullback"))
+            stdscr.erase()
+            h, w = stdscr.getmaxyx()
+            bw = min(w - 2, 58)  # box width
+
+            row = 0
+
+            # Top border
+            stdscr.addstr(row, 0, "┌─ pullback " + "─" * (bw - 13) + "┐")
+            row += 1
 
             for src_name, src_cfg in cfg["sources"].items():
-                state = load_state(src_name)
+                state_data = load_state(src_name)
                 progress = get_progress(src_name)
                 is_running = progress and progress.get("source")
 
-                # Status
                 if is_running:
-                    status = "RUNNING"
-                elif state.get("last_run_success") is True:
-                    status = "OK"
-                elif state.get("last_run_success") is False:
-                    status = "FAILED"
+                    status, scol = "RUNNING", 3
+                elif state_data.get("last_run_success") is True:
+                    status, scol = "OK", 3
+                elif state_data.get("last_run_success") is False:
+                    status, scol = "FAILED", 1
                 else:
-                    status = "IDLE"
+                    status, scol = "IDLE", 5
 
-                sc = _status_col(status)
-                host = src_cfg.get("host", "")
-                lines.append(_box_line(f"{BOLD}{src_name}{R} ({host}){' ' * 20}{sc}{status}{R}"))
+                # Source line
+                stdscr.addstr(row, 0, "│ ")
+                stdscr.addstr(src_name, curses.A_BOLD)
+                host = f" ({src_cfg.get('host', '')})"
+                stdscr.addstr(host)
+                # Right-align status
+                status_col = bw - 1 - len(status)
+                stdscr.addstr(row, status_col, status, curses.color_pair(scol) | curses.A_BOLD)
+                stdscr.addstr(row, bw, "│")
+                row += 1
 
                 if is_running:
+                    # Progress bar
                     pct = progress.get("overall_pct", 0)
                     eta = progress.get("eta", "--")
-                    bar = _bar(pct)
-                    lines.append(_box_line(f"{bar}  {pct}%  ETA {eta}"))
+                    bar_w = bw - 22  # room for pct + eta
+                    filled = int(bar_w * pct / 100)
 
-                    cur_file = progress.get("current_file", "")
-                    step = progress.get("step", "")
-                    lines.append(_box_line(f"{DIM}{_trunc(cur_file or step, W-4)}{R}"))
+                    stdscr.addstr(row, 0, "│ ")
+                    stdscr.addstr("█" * filled, curses.color_pair(3))
+                    stdscr.addstr("░" * (bar_w - filled))
+                    stdscr.addstr(f" {pct:>3}%  ETA {eta}")
+                    stdscr.addstr(row, bw, "│")
+                    row += 1
 
+                    # Current file
+                    cur_file = progress.get("current_file", "") or progress.get("step", "")
+                    max_len = bw - 4
+                    if len(cur_file) > max_len:
+                        cur_file = cur_file[:max_len - 1] + "…"
+                    stdscr.addstr(row, 0, "│ ")
+                    stdscr.addstr(cur_file, curses.A_DIM)
+                    stdscr.addstr(row, bw, "│")
+                    row += 1
+
+                    # Transferred / elapsed
                     transferred = progress.get("bytes_transferred", 0)
                     elapsed = progress.get("elapsed", 0)
-                    lines.append(_box_line(
-                        f"{_fmt_bytes(transferred)} transferred / {_fmt_dur(elapsed)} elapsed"
-                    ))
+                    info = f"{_fmt_bytes(transferred)} transferred / {_fmt_dur(elapsed)} elapsed"
+                    stdscr.addstr(row, 0, f"│ {info}")
+                    stdscr.addstr(row, bw, "│")
+                    row += 1
+
                 else:
-                    last = state.get("last_success_at") or state.get("last_run_started_at")
-                    dur = state.get("last_sync_duration", 0)
+                    # Last sync info
+                    last = state_data.get("last_success_at") or state_data.get("last_run_started_at")
+                    dur = state_data.get("last_sync_duration", 0)
                     if last:
-                        last_short = last[:19].replace("T", " ")
-                        lines.append(_box_line(f"{DIM}Last: {last_short} / {_fmt_dur(dur)}{R}"))
-                    err = state.get("last_error")
+                        info = f"Last: {last[:19].replace('T', ' ')} / {_fmt_dur(dur)}"
+                        stdscr.addstr(row, 0, "│ ")
+                        stdscr.addstr(info, curses.A_DIM)
+                        stdscr.addstr(row, bw, "│")
+                        row += 1
+
+                    err = state_data.get("last_error")
                     if err:
-                        lines.append(_box_line(f"\033[31m{_trunc(err, W-4)}{R}"))
+                        max_len = bw - 4
+                        if len(err) > max_len:
+                            err = err[:max_len - 1] + "…"
+                        stdscr.addstr(row, 0, "│ ")
+                        stdscr.addstr(err, curses.color_pair(1))
+                        stdscr.addstr(row, bw, "│")
+                        row += 1
 
-            # Stats section
-            lines.append(_box_mid())
+            # Divider
+            stdscr.addstr(row, 0, "├" + "─" * (bw - 1) + "┤")
+            row += 1
 
-            nc = _speed_col(s["net_mbs"])
-            dc = _speed_col(s["disk_mbs"])
-            nac = _speed_col(a["net_avg"])
-            dac = _speed_col(a["disk_avg"])
+            # Net stats
+            stdscr.addstr(row, 0, "│ Net   ")
+            stdscr.addstr("avg ", curses.A_DIM)
+            stdscr.addstr(f"{a['net_avg']:>3}", curses.color_pair(_speed_pair(a['net_avg'])))
+            stdscr.addstr(" MB/s  ")
+            stdscr.addstr("now ", curses.A_DIM)
+            stdscr.addstr(f"{s['net_mbs']:>3}", curses.color_pair(_speed_pair(s['net_mbs'])))
+            stdscr.addstr(" MB/s")
+            stdscr.addstr(row, bw, "│")
+            row += 1
 
-            lines.append(_box_line(
-                f"Net   {nac}avg {a['net_avg']:>3}{R} MB/s  {nc}now {s['net_mbs']:>3}{R} MB/s"
-            ))
-            lines.append(_box_line(
-                f"Disk  {dac}avg {a['disk_avg']:>3}{R} MB/s  {dc}now {s['disk_mbs']:>3}{R} MB/s"
-            ))
-            lines.append(_box_line(
-                f"Dirty {s['dirty_mb']}MB / Writeback {s['writeback_mb']}MB"
-            ))
+            # Disk stats
+            stdscr.addstr(row, 0, "│ Disk  ")
+            stdscr.addstr("avg ", curses.A_DIM)
+            stdscr.addstr(f"{a['disk_avg']:>3}", curses.color_pair(_speed_pair(a['disk_avg'])))
+            stdscr.addstr(" MB/s  ")
+            stdscr.addstr("now ", curses.A_DIM)
+            stdscr.addstr(f"{s['disk_mbs']:>3}", curses.color_pair(_speed_pair(s['disk_mbs'])))
+            stdscr.addstr(" MB/s")
+            stdscr.addstr(row, bw, "│")
+            row += 1
 
-            # Volume info
+            # Dirty / writeback
+            stdscr.addstr(row, 0, f"│ Dirty {s['dirty_mb']}MB / Writeback {s['writeback_mb']}MB")
+            stdscr.addstr(row, bw, "│")
+            row += 1
+
+            # Volume
             try:
-                st = os.statvfs(mount_point)
-                total_gb = st.f_blocks * st.f_frsize / 1024**3
-                free_gb = st.f_bavail * st.f_frsize / 1024**3
+                st_fs = os.statvfs(mount_point)
+                total_gb = st_fs.f_blocks * st_fs.f_frsize / 1024**3
+                free_gb = st_fs.f_bavail * st_fs.f_frsize / 1024**3
                 if total_gb >= 1024:
-                    lines.append(_box_line(f"Volume: {free_gb/1024:.1f} TB free / {total_gb/1024:.1f} TB"))
+                    vol = f"Volume: {free_gb/1024:.1f} TB free / {total_gb/1024:.1f} TB"
                 else:
-                    lines.append(_box_line(f"Volume: {free_gb:.0f} GB free / {total_gb:.0f} GB"))
+                    vol = f"Volume: {free_gb:.0f} GB free / {total_gb:.0f} GB"
             except OSError:
-                lines.append(_box_line("Volume: not mounted"))
+                vol = "Volume: not mounted"
+            stdscr.addstr(row, 0, f"│ {vol}")
+            stdscr.addstr(row, bw, "│")
+            row += 1
+
+            # Controls divider
+            stdscr.addstr(row, 0, "├" + "─" * (bw - 1) + "┤")
+            row += 1
 
             # Controls
-            lines.append(_box_mid())
-            lines.append(_box_line(f"{DIM}r=Run  c=Cancel  t=Tune  q=Quit{R}"))
-            lines.append(_box_bot())
+            stdscr.addstr(row, 0, "│ ")
+            stdscr.addstr("r", curses.A_BOLD)
+            stdscr.addstr("=Run  ")
+            stdscr.addstr("c", curses.A_BOLD)
+            stdscr.addstr("=Cancel  ")
+            stdscr.addstr("q", curses.A_BOLD)
+            stdscr.addstr("=Quit")
+            stdscr.addstr(row, bw, "│")
+            row += 1
 
-            # Render — cursor home + overwrite
-            frame = "\033[H\033[J" + "\r\n".join(lines) + "\r\n"
-            sys.stdout.write(frame)
-            sys.stdout.flush()
+            # Bottom border
+            stdscr.addstr(row, 0, "└" + "─" * (bw - 1) + "┘")
 
-    except KeyboardInterrupt:
-        pass
-    finally:
-        # Show cursor, restore terminal
-        sys.stdout.write("\033[?25h")
-        sys.stdout.flush()
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        print()
+            stdscr.refresh()
+
+    curses.wrapper(_main)
 
 
 def _run_sync_bg(cfg):
