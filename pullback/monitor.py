@@ -36,6 +36,7 @@ class Monitor:
         self._prev_rx = self._read_rx_bytes()
         self._prev_disk = self._read_disk_sectors()
         self._prev_t = time.time()
+        self._last_sample = {"net_mbs": 0, "disk_mbs": 0, "dirty_mb": 0, "writeback_mb": 0}
 
         # Ensure state dir exists
         _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -43,9 +44,19 @@ class Monitor:
     def sample(self):
         """Take a sample, return current rates and dirty stats.
 
+        Rate-limited to minimum 2 second intervals. Returns cached result
+        if called more frequently (e.g. multiple HTTP polls).
+
         Returns dict: {net_mbs, disk_mbs, dirty_mb, writeback_mb}
         Also persists to rolling window.
         """
+        curr_t = time.time()
+        dt = curr_t - self._prev_t
+
+        # Rate limit — return cached if less than 2 seconds since last sample
+        if dt < 2:
+            return self._last_sample
+
         # Re-detect device in case drive was swapped
         new_dev = tuning.block_device(self._mount_point) or "sda"
         if new_dev != self._dev:
@@ -55,8 +66,6 @@ class Monitor:
 
         curr_rx = self._read_rx_bytes()
         curr_disk = self._read_disk_sectors()
-        curr_t = time.time()
-        dt = curr_t - self._prev_t
 
         dirty_kb = tuning._read_meminfo("Dirty") or 0
         wb_kb = tuning._read_meminfo("Writeback") or 0
@@ -71,12 +80,13 @@ class Monitor:
         # Persist to rolling window
         self._append_sample(net_mbs, disk_mbs, dirty_kb // 1024)
 
-        return {
+        self._last_sample = {
             "net_mbs": net_mbs,
             "disk_mbs": disk_mbs,
             "dirty_mb": dirty_kb // 1024,
             "writeback_mb": wb_kb // 1024,
         }
+        return self._last_sample
 
     def averages(self):
         """Return rolling window averages (excluding noise < 6 MB/s).
