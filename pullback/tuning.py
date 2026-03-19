@@ -99,7 +99,7 @@ PARAM_REGISTRY = [
         "description": "I/O scheduler for backup device",
         "type": "sysfs",
         "sysfs": "/sys/block/{dev}/queue/scheduler",
-        "default": "none",
+        "default": "mq-deadline",
         "unit": "str",
         "options": ["none", "mq-deadline", "kyber", "bfq"],
     },
