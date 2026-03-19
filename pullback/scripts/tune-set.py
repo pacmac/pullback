@@ -13,6 +13,15 @@ import tuning
 
 _MB = 1024 * 1024
 
+def _speed_colour(mbs):
+    """Return ANSI colour for MB/s: <50 red, 50-80 orange, >80 green."""
+    if mbs < 50:
+        return "\033[31m"    # red
+    elif mbs <= 80:
+        return "\033[33m"    # orange/yellow
+    else:
+        return "\033[32m"    # green
+
 
 def _fmt(val, unit):
     """Format a value for display based on unit type."""
@@ -194,7 +203,10 @@ def main():
                     net_mbs = int((curr_rx - prev_rx) / _MB / dt) if dt > 0 else 0
                     disk_mbs = int((curr_disk - prev_disk) * 512 / _MB / dt) if dt > 0 else 0
 
-                    sys.stdout.write(f"\r  {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {net_mbs:>8} {disk_mbs:>8}  ")
+                    nc = _speed_colour(net_mbs)
+                    dc = _speed_colour(disk_mbs)
+                    R = "\033[0m"
+                    sys.stdout.write(f"\r  {dirty_kb//1024:>6}MB {wb_kb//1024:>6}MB {nc}{net_mbs:>8}{R} {dc}{disk_mbs:>8}{R}  ")
                     sys.stdout.flush()
 
                     prev_rx = curr_rx
