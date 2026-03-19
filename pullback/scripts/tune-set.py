@@ -53,10 +53,13 @@ def main():
             if val is None:
                 val = "?"
             default = p["default"]
-            marker = "" if str(val) == str(default) else " *"
             disp_val = _to_mb(key, val)
             disp_def = _to_mb(key, default)
-            print(f"  {i:>2}. {key:<32} {disp_val:<20} {disp_def}{marker}")
+            changed = str(val) != str(default)
+            if changed:
+                print(f"  \033[33m{i:>2}. {key:<32} {disp_val:<20} {disp_def} *\033[0m")
+            else:
+                print(f"  {i:>2}. {key:<32} {disp_val:<20} {disp_def}")
 
         print()
         print("  0. Exit")
