@@ -61,6 +61,7 @@ def main():
         print()
         print("  0. Exit")
         print("  a. Set ALL to defaults")
+        print("  s. Save current values to YAML")
         print()
 
         # Prompt for selection
@@ -76,6 +77,16 @@ def main():
         if choice.lower() == "a":
             applied = tuning.apply_defaults(mount_point)
             print(f"  Reset {len(applied)} params to defaults")
+            continue
+
+        if choice.lower() == "s":
+            from datetime import datetime
+            ts = datetime.now().strftime("%y%m%d-%H%M%S")
+            filename = f"tune-{ts}.yaml"
+            filepath = Path(__file__).resolve().parent.parent / "state" / filename
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            filepath.write_text(tuning.status_yaml(mount_point) + "\n")
+            print(f"  Saved to {filepath}")
             continue
 
         try:
