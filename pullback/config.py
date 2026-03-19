@@ -31,15 +31,15 @@ def load_config(path=None):
     # This is the final override — drive values win over config.yaml and config.local.yaml.
     mount_point = cfg.get("mount_point", "/backup")
     tune_path = Path(mount_point) / ".pullback-tune.yaml"
-    if tune_path.exists():
-        try:
+    try:
+        if tune_path.exists():
             with open(tune_path) as f:
                 drive = yaml.safe_load(f)
             if drive and "tuning" in drive:
                 cfg.setdefault("tuning", {})
                 cfg["tuning"].update(drive["tuning"])
-        except (OSError, yaml.YAMLError):
-            pass
+    except (OSError, yaml.YAMLError):
+        pass
 
     return cfg
 
