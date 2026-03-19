@@ -97,8 +97,9 @@ def main():
         print("  q. Quit")
         print("  a. Set ALL to defaults")
         print("  s. Save current values to YAML")
+        print("  w. Write current values to backup volume")
         print("  l. Load and apply from saved YAML")
-        print("  m. Monitor live stats (Ctrl+C to stop)")
+        print("  m. Monitor live stats (any key to stop)")
         print()
 
         try:
@@ -123,6 +124,12 @@ def main():
             filepath.parent.mkdir(parents=True, exist_ok=True)
             filepath.write_text(tuning.status_yaml(mount_point) + "\n")
             print(f"  Saved to {filepath}")
+            continue
+
+        if choice.lower() == "w":
+            drive_tune = Path(mount_point) / ".pullback-tune.yaml"
+            drive_tune.write_text(tuning.status_yaml(mount_point) + "\n")
+            print(f"  Written to {drive_tune}")
             continue
 
         if choice.lower() == "l":
