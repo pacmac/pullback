@@ -11,50 +11,68 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import tuning
 
-# Params displayed and entered in MB
-_MB_KEYS = {"bdi_max_bytes", "rmem_max", "wmem_max"}
 _MB = 1024 * 1024
 
 
-def _to_mb(key, val):
-    """Convert bytes to MB for display."""
-    if key in _MB_KEYS and isinstance(val, (int, float)) and val > 0:
-        return f"{int(val) // _MB}MB"
-    if key in _MB_KEYS and isinstance(val, str) and val.isdigit() and int(val) > 0:
-        return f"{int(val) // _MB}MB"
+def _fmt(val, unit):
+    """Format a value for display based on unit type."""
+    if unit == "bytes":
+        if isinstance(val, (int, float)) and val > 0:
+            return f"{int(val) // _MB}MB"
+        if isinstance(val, str) and val.isdigit() and int(val) > 0:
+            return f"{int(val) // _MB}MB"
+        return "0MB" if val == 0 or val == "0" else str(val)
+    elif unit == "bool":
+        if isinstance(val, bool):
+            return "on" if val else "off"
+        if isinstance(val, str):
+            return "on" if val.lower() in ("true", "1") else "off"
+        return str(val)
     return str(val)
 
 
-def _from_mb(key, val_str):
-    """Convert MB input to bytes for byte params."""
-    if key in _MB_KEYS:
+def _parse(val_str, unit):
+    """Parse user input based on unit type. Returns (value, error)."""
+    if unit == "bytes":
         try:
-            return int(float(val_str)) * _MB
+            return int(float(val_str)) * _MB, None
         except ValueError:
-            return None
-    return val_str
+            return None, f"Invalid MB value: {val_str}"
+    elif unit == "bool":
+        if val_str in ("1", "on", "true", "yes"):
+            return True, None
+        elif val_str in ("2", "off", "false", "no"):
+            return False, None
+        else:
+            return None, "Enter 1 (on) or 2 (off)"
+    elif unit == "int":
+        try:
+            return int(val_str), None
+        except ValueError:
+            return None, f"Invalid integer: {val_str}"
+    else:
+        return val_str, None
 
 
 def main():
     mount_point = "/backup"
 
     while True:
-        # Read live values
         live = tuning.read_live(mount_point)
         registry = tuning.get_registry()
 
-        # Display with numbers
         print()
-        print("  # Parameter                        Current Value       Default")
+        print("  # Parameter                        Current             Default")
         print("  " + "─" * 70)
         for i, p in enumerate(registry, 1):
             key = p["key"]
+            unit = p.get("unit", "str")
             val = live.get(key)
             if val is None:
                 val = "?"
             default = p["default"]
-            disp_val = _to_mb(key, val)
-            disp_def = _to_mb(key, default)
+            disp_val = _fmt(val, unit)
+            disp_def = _fmt(default, unit)
             changed = str(val) != str(default)
             if changed:
                 print(f"  \033[33m{i:>2}. {key:<32} {disp_val:<20} {disp_def} *\033[0m")
@@ -68,7 +86,6 @@ def main():
         print("  l. Load and apply from saved YAML")
         print()
 
-        # Prompt for selection
         try:
             choice = input("  Select parameter #: ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -137,12 +154,12 @@ def main():
 
         param = registry[idx]
         key = param["key"]
+        unit = param.get("unit", "str")
         current = live.get(key, "?")
         default = param["default"]
 
-        disp_current = _to_mb(key, current)
-        disp_default = _to_mb(key, default)
-        unit = " (MB)" if key in _MB_KEYS else ""
+        disp_current = _fmt(current, unit)
+        disp_default = _fmt(default, unit)
 
         print()
         print(f"  {key}")
@@ -150,7 +167,13 @@ def main():
         print(f"  Default: {disp_default}")
         print()
         print(f"  d = set to default ({disp_default})")
-        print(f"  or enter a new value{unit}")
+        if unit == "bool":
+            print(f"  1 = on")
+            print(f"  2 = off")
+        elif unit == "bytes":
+            print(f"  or enter value in MB")
+        else:
+            print(f"  or enter a new value")
         print()
 
         try:
@@ -164,24 +187,12 @@ def main():
 
         if val_input.lower() == "d":
             new_val = default
-        elif key in _MB_KEYS:
-            new_val = _from_mb(key, val_input)
-            if new_val is None:
-                print(f"  Invalid MB value: {val_input}")
-                continue
         else:
-            if isinstance(default, bool):
-                new_val = val_input.lower() in ("true", "1", "yes", "on")
-            elif isinstance(default, int):
-                try:
-                    new_val = int(val_input)
-                except ValueError:
-                    print(f"  Invalid integer: {val_input}")
-                    continue
-            else:
-                new_val = val_input
+            new_val, err = _parse(val_input, unit)
+            if err:
+                print(f"  {err}")
+                continue
 
-        # Apply
         applied = tuning.apply_values({key: new_val}, mount_point)
         if applied:
             print(f"  Applied: {', '.join(applied)}")

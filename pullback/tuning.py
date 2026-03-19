@@ -34,6 +34,7 @@ PARAM_REGISTRY = [
         "type": "sysctl",
         "sysctl": "vm.dirty_ratio",
         "default": 20,
+        "unit": "int",
     },
     {
         "key": "dirty_background_ratio",
@@ -41,6 +42,7 @@ PARAM_REGISTRY = [
         "type": "sysctl",
         "sysctl": "vm.dirty_background_ratio",
         "default": 10,
+        "unit": "int",
     },
     {
         "key": "dirty_expire_centisecs",
@@ -48,6 +50,7 @@ PARAM_REGISTRY = [
         "type": "sysctl",
         "sysctl": "vm.dirty_expire_centisecs",
         "default": 3000,
+        "unit": "int",
     },
     {
         "key": "dirty_writeback_centisecs",
@@ -55,6 +58,7 @@ PARAM_REGISTRY = [
         "type": "sysctl",
         "sysctl": "vm.dirty_writeback_centisecs",
         "default": 500,
+        "unit": "int",
     },
     {
         "key": "bdi_max_bytes",
@@ -63,6 +67,7 @@ PARAM_REGISTRY = [
         "sysfs_max": "/sys/block/{dev}/bdi/max_bytes",
         "sysfs_strict": "/sys/block/{dev}/bdi/strict_limit",
         "default": 0,
+        "unit": "bytes",
     },
     {
         "key": "rps_enabled",
@@ -71,12 +76,14 @@ PARAM_REGISTRY = [
         "sysfs_cpus": "/sys/class/net/{iface}/queues/rx-0/rps_cpus",
         "sysfs_flow": "/proc/sys/net/core/rps_sock_flow_entries",
         "default": False,
+        "unit": "bool",
     },
     {
         "key": "eee_off",
         "description": "Disable Energy Efficient Ethernet",
         "type": "eee",
         "default": False,
+        "unit": "bool",
     },
     {
         "key": "cpu_governor",
@@ -84,6 +91,7 @@ PARAM_REGISTRY = [
         "type": "governor",
         "sysfs_pattern": "/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor",
         "default": "ondemand",
+        "unit": "str",
     },
     {
         "key": "scheduler",
@@ -91,6 +99,7 @@ PARAM_REGISTRY = [
         "type": "sysfs",
         "sysfs": "/sys/block/{dev}/queue/scheduler",
         "default": "none",
+        "unit": "str",
     },
     {
         "key": "nr_requests",
@@ -98,6 +107,7 @@ PARAM_REGISTRY = [
         "type": "sysfs",
         "sysfs": "/sys/block/{dev}/queue/nr_requests",
         "default": 1,
+        "unit": "int",
     },
     {
         "key": "max_sectors_kb",
@@ -105,6 +115,7 @@ PARAM_REGISTRY = [
         "type": "sysfs",
         "sysfs": "/sys/block/{dev}/queue/max_sectors_kb",
         "default": 256,
+        "unit": "int",
     },
     {
         "key": "read_ahead_kb",
@@ -112,6 +123,7 @@ PARAM_REGISTRY = [
         "type": "sysfs",
         "sysfs": "/sys/block/{dev}/queue/read_ahead_kb",
         "default": 128,
+        "unit": "int",
     },
     {
         "key": "tcp_slow_start_after_idle",
@@ -119,6 +131,7 @@ PARAM_REGISTRY = [
         "type": "sysctl",
         "sysctl": "net.ipv4.tcp_slow_start_after_idle",
         "default": 1,
+        "unit": "int",
     },
     {
         "key": "rmem_max",
@@ -126,6 +139,7 @@ PARAM_REGISTRY = [
         "type": "sysctl",
         "sysctl": "net.core.rmem_max",
         "default": 212992,
+        "unit": "bytes",
     },
     {
         "key": "wmem_max",
@@ -133,6 +147,7 @@ PARAM_REGISTRY = [
         "type": "sysctl",
         "sysctl": "net.core.wmem_max",
         "default": 212992,
+        "unit": "bytes",
     },
     {
         "key": "netdev_max_backlog",
@@ -140,6 +155,7 @@ PARAM_REGISTRY = [
         "type": "sysctl",
         "sysctl": "net.core.netdev_max_backlog",
         "default": 1000,
+        "unit": "int",
     },
 ]
 
