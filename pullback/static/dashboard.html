@@ -200,8 +200,12 @@ async function poll() {
         // System stats
         const sys = data.system || {};
         document.getElementById('sys-cpu').textContent = (sys.cpu_pct || 0) + '%';
-        document.getElementById('sys-disk').textContent = (sys.disk_mb_s || 0) + ' MB/s';
-        document.getElementById('sys-net').textContent = (sys.net_mb_s || 0) + ' MB/s';
+        const diskAvg = sys.disk_avg || 0;
+        const netAvg = sys.net_avg || 0;
+        const diskNow = sys.disk_mb_s || 0;
+        const netNow = sys.net_mb_s || 0;
+        document.getElementById('sys-disk').textContent = diskAvg + ' avg / ' + diskNow + ' now';
+        document.getElementById('sys-net').textContent = netAvg + ' avg / ' + netNow + ' now';
 
         // Health stats
         const dirtyMb = sys.dirty_mb || 0;
