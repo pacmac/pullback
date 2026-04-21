@@ -86,8 +86,6 @@ def run_sync(cmd, local_dest, progress_callback=None, cancel_check=None):
 
     Returns dict with: success, files_transferred, bytes_total, duration, error
     """
-    Path(local_dest).mkdir(parents=True, exist_ok=True)
-
     start = time.time()
     current_file = None
     last_pct = 0
@@ -96,6 +94,8 @@ def run_sync(cmd, local_dest, progress_callback=None, cancel_check=None):
     last_eta = ""
 
     try:
+        Path(local_dest).mkdir(parents=True, exist_ok=True)
+
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
