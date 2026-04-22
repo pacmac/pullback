@@ -277,7 +277,12 @@ def _run_all_locked(cfg, source_filter=None, folder_filter=None):
     """Inner run_all — called while holding the lock."""
     # Verify backup volume is mounted
     flag = Path(cfg["mount_point"]) / cfg["usb"]["flag_file"]
-    if not flag.exists():
+    try:
+        flag_present = flag.exists()
+    except OSError as e:
+        log.error(f"I/O error checking backup volume flag {flag}: {e}. Aborting.")
+        flag_present = False
+    if not flag_present:
         log.error(f"No backup volume mounted — {flag} not found. Aborting.")
         try:
             from alerts import alert_no_volume

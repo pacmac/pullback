@@ -96,7 +96,10 @@ def _get_system_stats():
     # Volume info
     mount = _cfg["mount_point"]
     flag = Path(mount) / _cfg["usb"]["flag_file"]
-    result["volume_mounted"] = flag.exists()
+    try:
+        result["volume_mounted"] = flag.exists()
+    except OSError:
+        result["volume_mounted"] = False
     try:
         st = os.statvfs(mount)
         total = st.f_blocks * st.f_frsize
