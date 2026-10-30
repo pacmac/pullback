@@ -34,11 +34,9 @@ _VZDUMP_ARCHIVE_RE = re.compile(r"^\.(vma|tar)(\.(zst|gz|lzo))?$")
 # In-progress vzdump leftovers: temp archive (.vma.dat/.tar.dat) and .tmp dir
 _VZDUMP_LEFTOVER_RE = re.compile(r"^\.((vma|tar)\.dat|tmp)$")
 
-# Pruned-set list kept in the dest folder, fed to rsync --exclude-from
+# Pruned-set list kept in the dest folder, fed to rsync --exclude-from.
+# Never trimmed by age: the remote can keep orphan .log files for years.
 PRUNED_LIST = ".pullback-pruned"
-
-# Pruned entries older than this are dropped from the list (remote has long since removed them)
-_PRUNED_MAX_AGE_DAYS = 400
 
 
 def apply_retention(folder_path, retention_cfg, dry_run=False):
@@ -84,9 +82,6 @@ def record_pruned(folder_path, deleted):
         if m and m["base"] not in remaining:
             entries.add(m["base"])
 
-    cutoff = time.time() - _PRUNED_MAX_AGE_DAYS * 86400
-    entries = {b for b in entries if _vzdump_ts_epoch(b) >= cutoff}
-
     # Only rewrite when something changed
     if entries == set(_read_pruned(list_path)):
         return
@@ -115,17 +110,6 @@ def _read_pruned(list_path):
     except FileNotFoundError:
         return []
     return [ln[1:-1] for ln in lines if ln.startswith("/vzdump-") and ln.endswith("*")]
-
-
-def _vzdump_ts_epoch(base):
-    """Epoch seconds of a vzdump base's timestamp (0 if unparseable)."""
-    m = _VZDUMP_NAME_RE.match(base)
-    if not m:
-        return 0
-    try:
-        return datetime.strptime(m["ts"], "%Y_%m_%d-%H_%M_%S").timestamp()
-    except ValueError:
-        return 0
 
 
 def post_sync_stamp(folder_path, retention_cfg):
@@ -583,9 +567,9 @@ if __name__ == "__main__":
         assert f"/vzdump-lxc-100-{D[1]}-02_00_00*\n" in text
         assert pruned_exclude_file(tmpdir) == tmpdir / PRUNED_LIST
 
-        # Entries past max age are dropped
-        record_pruned(tmpdir, [str(tmpdir / "vzdump-lxc-100-2020_01_01-00_00_00.tar.zst")])
-        assert "vzdump-lxc-100-2020_01_01-00_00_00" not in _read_pruned(tmpdir / PRUNED_LIST)
+        # Old entries are kept — the remote can hold orphan logs for years
+        record_pruned(tmpdir, [str(tmpdir / "vzdump-qemu-212-2024_04_28-01_14_32.log")])
+        assert "vzdump-qemu-212-2024_04_28-01_14_32" in _read_pruned(tmpdir / PRUNED_LIST)
         print("  pruned list: OK")
     finally:
         shutil.rmtree(tmpdir)
