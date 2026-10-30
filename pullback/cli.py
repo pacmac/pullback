@@ -642,6 +642,69 @@ def cmd_config(args):
         sys.exit(1)
 
 
+# ── retention command ────────────────────────────────────
+
+
+def _du(path):
+    """Size in bytes of a file or directory tree."""
+    if path.is_dir() and not path.is_symlink():
+        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    return path.stat().st_size
+
+
+def cmd_retention(args):
+    """Show (default) or apply retention for configured folders."""
+    from collections import defaultdict
+    from retention import apply_retention, record_pruned
+    from sync import build_command
+
+    cfg = load_config(args.config)
+    if args.apply:
+        _require_root()
+
+    total_files = total_bytes = 0
+    for source_name, source_cfg in cfg["sources"].items():
+        if args.source and source_name != args.source:
+            continue
+        for folder_cfg in source_cfg["folders"]:
+            retention_cfg = folder_cfg.get("retention")
+            if not retention_cfg or (args.folder and folder_cfg["path"] != args.folder):
+                continue
+
+            _, local_dest = build_command(source_cfg, folder_cfg, [], cfg["mount_point"])
+            local = Path(local_dest)
+            planned = apply_retention(local, retention_cfg, dry_run=True)
+            sizes = {p: _du(Path(p)) for p in planned}
+
+            _log_info(f"[{source_name}] {folder_cfg['path']}  keep={retention_cfg['keep']}")
+            by_group = defaultdict(lambda: [0, 0])
+            for p, size in sizes.items():
+                group = re.sub(r"-\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}.*$", "", Path(p).name)
+                by_group[group][0] += 1
+                by_group[group][1] += size
+            for group, (n, size) in sorted(by_group.items()):
+                print(f"  {group:<28} {n:>5} files  {size / 1e9:>9.1f} GB")
+                if args.verbose:
+                    for p in sorted(sizes):
+                        if Path(p).name.startswith(group + "-") or Path(p).name == group:
+                            print(f"      {Path(p).name}")
+            folder_bytes = sum(sizes.values())
+            print(f"  {'total':<28} {len(planned):>5} files  {folder_bytes / 1e9:>9.1f} GB")
+            total_files += len(planned)
+            total_bytes += folder_bytes
+
+            if args.apply and planned:
+                deleted = apply_retention(local, retention_cfg)
+                if "pattern" in retention_cfg:
+                    record_pruned(local, deleted)
+                _log_ok(f"  deleted {len(deleted)} files")
+
+    verb = "Deleted" if args.apply else "Would delete"
+    print(f"\n{verb} {total_files} files, {total_bytes / 1e9:.1f} GB")
+    if not args.apply and total_files:
+        print("Dry run — nothing deleted. Re-run with --apply to delete.")
+
+
 # ── Watch — interactive terminal dashboard ───────────
 
 
@@ -865,6 +928,12 @@ def main():
     p_config = sub.add_parser("config", help="Show loaded config")
     p_config.add_argument("--dump", action="store_true", help="Output as YAML")
 
+    p_ret = sub.add_parser("retention", help="Show what retention would delete (--apply to delete)")
+    p_ret.add_argument("--source", default=None)
+    p_ret.add_argument("--folder", default=None)
+    p_ret.add_argument("--apply", action="store_true", help="Actually delete")
+    p_ret.add_argument("-v", "--verbose", action="store_true", help="List every file")
+
     # Tune subcommands
     p_tune = sub.add_parser("tune", help="Tuning commands")
     tune_sub = p_tune.add_subparsers(dest="tune_command")
@@ -892,6 +961,7 @@ def main():
         "cancel": cmd_cancel,
         "watch": cmd_watch,
         "config": cmd_config,
+        "retention": cmd_retention,
         "tune": cmd_tune,
     }
     cmds[args.command](args)
