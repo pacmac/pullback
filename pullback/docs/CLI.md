@@ -71,6 +71,20 @@ cli.py config
 Loads config.yaml, validates, applies defaults, prints as JSON. Same as
 `python3 config.py` but accessible from the CLI.
 
+### retention
+
+Show what retention would delete, per guest, with sizes. Dry run by default.
+
+```
+cli.py retention [--source NAME] [--folder PATH] [-v] [--apply]
+```
+
+- `-v` lists every file.
+- `--apply` deletes (requires root) and records pruned vzdump sets in
+  `.pullback-pruned` so the next sync doesn't pull them back.
+
+See RETENTION.md for the rules.
+
 ## Live progress
 
 When `sync` is running, the progress callback in engine.py must:
