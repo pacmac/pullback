@@ -117,7 +117,9 @@ After pruning, whole vzdump sets that were deleted are recorded in
 `<folder>/.pullback-pruned` as rsync exclude rules (`/<set-base>*`). The engine
 passes this file to rsync with `--exclude-from`. The file excludes itself, so
 `--delete` never removes it. It lives on the backup drive, so each drive has its
-own list. Entries older than 400 days are dropped.
+own list. Entries are never trimmed by age — PVE can keep orphan `.log`
+files from long-gone backups for years, and dropping their entries makes rsync
+pull them back every run.
 
 Raising `keep` later does not bring back sets already in the list — delete the
 matching lines (or the file) to re-pull them.
