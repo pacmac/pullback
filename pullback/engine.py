@@ -81,6 +81,14 @@ def run_folder(source_name, source_cfg, folder_cfg, cfg, state):
         cfg.get("ssh")
     )
 
+    # Skip backup sets that retention already pruned (still present on the remote)
+    retention_cfg = folder_cfg.get("retention")
+    if retention_cfg and "pattern" in retention_cfg:
+        from retention import pruned_exclude_file
+        exclude_file = pruned_exclude_file(local_dest)
+        if exclude_file:
+            cmd.insert(1, f"--exclude-from={exclude_file}")
+
     # Progress callback — writes to state/progress/ and console
     sync_start = time.time()
     smoothed_eta = [""]
@@ -156,13 +164,18 @@ def run_folder(source_name, source_cfg, folder_cfg, cfg, state):
         except ImportError:
             pass
 
-    # Retention: post-sync stamp then prune
-    retention_cfg = folder_cfg.get("retention")
-    if result["success"] and retention_cfg:
+    # Retention: post-sync stamp then prune.
+    # Pattern mode also runs after a failed sync — it only removes old local
+    # versions, and skipping it on a full disk keeps the disk full forever.
+    # After a failure keep one extra set: --partial may have left the newest
+    # archive half-copied under its final name.
+    if retention_cfg and (result["success"] or "pattern" in retention_cfg):
+        if not result["success"]:
+            retention_cfg = {**retention_cfg, "keep": retention_cfg["keep"] + 1}
         try:
-            from retention import apply_retention, post_sync_stamp
+            from retention import apply_retention, post_sync_stamp, record_pruned
 
-            # System-stamped: rename + symlink changed files
+            # System-stamped: rename + hardlink changed files
             if "retain_stamp" in retention_cfg:
                 post_sync_stamp(local_dest, retention_cfg)
 
@@ -170,8 +183,14 @@ def run_folder(source_name, source_cfg, folder_cfg, cfg, state):
             deleted = apply_retention(local_dest, retention_cfg)
             if deleted:
                 log.info(f"[{source_name}] retention: deleted {len(deleted)} old backup files")
+
+            # Pattern mode: exclude pruned sets so the next sync doesn't pull them back
+            if "pattern" in retention_cfg:
+                record_pruned(local_dest, deleted)
         except ImportError:
             log.warning(f"[{source_name}] retention.py not found, skipping")
+        except OSError as e:
+            log.error(f"[{source_name}] retention failed for {folder_path}: {e}")
 
     # Update folder state
     state["folders"][folder_path] = {
