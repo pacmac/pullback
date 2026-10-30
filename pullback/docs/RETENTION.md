@@ -88,6 +88,48 @@ The group key is determined by removing the timestamp portion from the filename.
 
 General rule: sort all matched bases alphabetically. Files that differ only in their trailing sortable portion belong to the same group.
 
+### vzdump sets (overrides extn_set)
+
+Names matching `vzdump-<type>-<vmid>-YYYY_MM_DD-HH_MM_SS<suffix>` are grouped by
+their own structure and `extn_set` is ignored for them. PVE writes different
+suffixes per guest type, which a fixed `extn_set` misses:
+
+| Guest | Archive | Notes | Log |
+|-------|---------|-------|-----|
+| VM (qemu) | `.vma.zst` | `.vma.zst.notes` | `.log` |
+| Container (lxc) | `.tar.zst` | `.tar.zst.notes` | `.log` |
+
+Rules:
+1. A **set** is every entry sharing `<group>-<timestamp>`, whatever the suffix — archive, notes, log, and in-progress leftovers (`.vma.dat`, `.tar.dat`, `.tmp/` directory).
+2. Only sets with a finished archive (`.vma`/`.tar`, optionally `.zst`/`.gz`/`.lzo`) count toward `keep`.
+3. The newest `keep` complete sets are kept. Every set older than the oldest kept one is deleted whole, including incomplete ones.
+4. In kept sets, `.dat`/`.tmp` leftovers are deleted (the archive exists, so the backup finished). These appear when a sync overlaps PVE's backup job.
+5. Incomplete sets newer than the oldest kept set are left alone — the backup is in progress or not fully pulled yet.
+
+Non-vzdump files matched by `pattern` use the generic `extn_set` grouping above.
+
+### Pruned list (stops re-downloads)
+
+The remote keeps its own (usually longer) retention, so a set pruned locally is
+still on the remote and rsync would pull it back on the next sync — every night.
+
+After pruning, whole vzdump sets that were deleted are recorded in
+`<folder>/.pullback-pruned` as rsync exclude rules (`/<set-base>*`). The engine
+passes this file to rsync with `--exclude-from`. The file excludes itself, so
+`--delete` never removes it. It lives on the backup drive, so each drive has its
+own list. Entries older than 400 days are dropped.
+
+Raising `keep` later does not bring back sets already in the list — delete the
+matching lines (or the file) to re-pull them.
+
+### When retention runs
+
+- After a successful sync: always.
+- After a failed sync: pattern mode only, with `keep + 1` (rsync `--partial` may
+  have left the newest archive half-copied under its final name). Skipping
+  retention on failure would leave a full disk full forever.
+- On demand: `cli.py retention` (dry run) / `cli.py retention --apply`.
+
 ## Mode 2: System-stamped (retain_stamp with $?)
 
 For files that don't have timestamps in their names. The system adds a `YYMMDDHHmmss` stamp after each sync.
