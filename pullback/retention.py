@@ -8,6 +8,7 @@ System-stamped uses hardlinks (not symlinks) so rsync can compare content normal
 import fnmatch
 import os
 import re
+import shutil
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -20,15 +21,35 @@ _STAMP_RE = re.compile(r"\d{12}")
 # Known vzdump timestamp pattern: YYYY_MM_DD-HH_MM_SS
 _VZDUMP_TS_RE = re.compile(r"-(\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2})$")
 
+# Full vzdump name: <group>-<timestamp><suffix>
+# e.g. vzdump-lxc-100-2026_03_13-02_00_00.tar.zst.notes
+#      → group "vzdump-lxc-100", base "vzdump-lxc-100-2026_03_13-02_00_00", suffix ".tar.zst.notes"
+_VZDUMP_NAME_RE = re.compile(
+    r"^(?P<base>(?P<group>vzdump-[a-z]+-\d+)-(?P<ts>\d{4}_\d{2}_\d{2}-\d{2}_\d{2}_\d{2}))(?P<suffix>.*)$"
+)
 
-def apply_retention(folder_path, retention_cfg):
+# Finished vzdump archive suffixes (.vma, .vma.zst, .tar.gz, ...)
+_VZDUMP_ARCHIVE_RE = re.compile(r"^\.(vma|tar)(\.(zst|gz|lzo))?$")
+
+# In-progress vzdump leftovers: temp archive (.vma.dat/.tar.dat) and .tmp dir
+_VZDUMP_LEFTOVER_RE = re.compile(r"^\.((vma|tar)\.dat|tmp)$")
+
+# Pruned-set list kept in the dest folder, fed to rsync --exclude-from
+PRUNED_LIST = ".pullback-pruned"
+
+# Pruned entries older than this are dropped from the list (remote has long since removed them)
+_PRUNED_MAX_AGE_DAYS = 400
+
+
+def apply_retention(folder_path, retention_cfg, dry_run=False):
     """Apply retention to a folder. Called by engine.py after sync.
 
     Args:
         folder_path: local folder path (str or Path)
         retention_cfg: dict with pattern|retain_stamp, extn_set, keep
+        dry_run: if True, delete nothing and return what would be deleted
 
-    Returns list of deleted file paths.
+    Returns list of deleted (or would-be-deleted) paths.
     """
     folder = Path(folder_path)
     if not folder.exists():
@@ -38,11 +59,73 @@ def apply_retention(folder_path, retention_cfg):
     extn_set = retention_cfg.get("extn_set", [])
 
     if "retain_stamp" in retention_cfg:
-        return _apply_system_stamped(folder, retention_cfg["retain_stamp"], extn_set, keep)
+        return _apply_system_stamped(folder, retention_cfg["retain_stamp"], extn_set, keep, dry_run)
     elif "pattern" in retention_cfg:
-        return _apply_pre_stamped(folder, retention_cfg["pattern"], extn_set, keep)
+        return _apply_pre_stamped(folder, retention_cfg["pattern"], extn_set, keep, dry_run)
 
     return []
+
+
+def record_pruned(folder_path, deleted):
+    """Add pruned vzdump sets to the folder's PRUNED_LIST.
+
+    Without this, rsync pulls pruned sets straight back on the next sync
+    (they still exist on the remote). Only whole sets that aged out are
+    recorded (nothing of the set remains) — leftover cleanup inside a kept
+    set is not.
+    """
+    folder = Path(folder_path)
+    list_path = folder / PRUNED_LIST
+    entries = set(_read_pruned(list_path))
+
+    remaining = {m["base"] for m in map(_VZDUMP_NAME_RE.match, os.listdir(folder)) if m}
+    for path in deleted:
+        m = _VZDUMP_NAME_RE.match(Path(path).name)
+        if m and m["base"] not in remaining:
+            entries.add(m["base"])
+
+    cutoff = time.time() - _PRUNED_MAX_AGE_DAYS * 86400
+    entries = {b for b in entries if _vzdump_ts_epoch(b) >= cutoff}
+
+    # Only rewrite when something changed
+    if entries == set(_read_pruned(list_path)):
+        return
+
+    tmp = list_path.with_suffix(".tmp")
+    with open(tmp, "w") as f:
+        f.write(f"/{PRUNED_LIST}\n")  # protect the list itself from --delete
+        for base in sorted(entries):
+            f.write(f"/{base}*\n")
+    tmp.rename(list_path)
+
+
+def pruned_exclude_file(folder_path):
+    """Path to the folder's rsync exclude file, or None if there isn't one."""
+    list_path = Path(folder_path) / PRUNED_LIST
+    try:
+        return list_path if list_path.is_file() else None
+    except OSError:
+        return None
+
+
+def _read_pruned(list_path):
+    """Return the set bases listed in a PRUNED_LIST file."""
+    try:
+        lines = list_path.read_text().splitlines()
+    except FileNotFoundError:
+        return []
+    return [ln[1:-1] for ln in lines if ln.startswith("/vzdump-") and ln.endswith("*")]
+
+
+def _vzdump_ts_epoch(base):
+    """Epoch seconds of a vzdump base's timestamp (0 if unparseable)."""
+    m = _VZDUMP_NAME_RE.match(base)
+    if not m:
+        return 0
+    try:
+        return datetime.strptime(m["ts"], "%Y_%m_%d-%H_%M_%S").timestamp()
+    except ValueError:
+        return 0
 
 
 def post_sync_stamp(folder_path, retention_cfg):
@@ -98,13 +181,19 @@ def post_sync_stamp(folder_path, retention_cfg):
 
 # ── Pre-stamped mode ──
 
-def _apply_pre_stamped(folder, pattern, extn_set, keep):
+def _apply_pre_stamped(folder, pattern, extn_set, keep, dry_run=False):
     """Retention for files with existing timestamps in names."""
-    # List all files matching pattern
-    all_files = [f.name for f in folder.iterdir() if f.is_file() and fnmatch.fnmatch(f.name, pattern)]
+    entries = [f for f in folder.iterdir() if fnmatch.fnmatch(f.name, pattern)]
+
+    # vzdump names carry their own set structure — group by timestamp, not extn_set
+    vzdump = [f for f in entries if _VZDUMP_NAME_RE.match(f.name)]
+    deleted = _apply_vzdump(vzdump, keep, dry_run)
+
+    # Everything else: generic extn_set grouping (files only)
+    all_files = [f.name for f in entries if f.is_file() and not _VZDUMP_NAME_RE.match(f.name)]
 
     if not all_files:
-        return []
+        return deleted
 
     if extn_set:
         # Strip extensions to get bases, group files by base
@@ -128,7 +217,6 @@ def _apply_pre_stamped(folder, pattern, extn_set, keep):
             groups[group_key].append(fname)
 
     # Prune each group
-    deleted = []
     for group_key, group_bases in groups.items():
         # Sort bases (timestamps sort naturally)
         group_bases.sort()
@@ -138,9 +226,51 @@ def _apply_pre_stamped(folder, pattern, extn_set, keep):
             for fname in bases[base]:
                 fpath = folder / fname
                 if fpath.exists():
-                    fpath.unlink()
+                    if not dry_run:
+                        fpath.unlink()
                     deleted.append(str(fpath))
 
+    return deleted
+
+
+def _apply_vzdump(entries, keep, dry_run=False):
+    """Retention for vzdump sets.
+
+    A set is every entry sharing <group>-<timestamp> (archive, .notes, .log,
+    .dat/.tmp leftovers). Only sets with a finished archive count toward keep.
+    Any set older than the oldest kept one is deleted whole. In kept sets,
+    .dat/.tmp leftovers are deleted once the archive exists.
+    """
+    # group → base → [entries]
+    groups = defaultdict(lambda: defaultdict(list))
+    for entry in entries:
+        m = _VZDUMP_NAME_RE.match(entry.name)
+        groups[m["group"]][m["base"]].append(entry)
+
+    doomed = []
+    for sets in groups.values():
+        def has_archive(base):
+            return any(_VZDUMP_ARCHIVE_RE.match(e.name[len(base):]) for e in sets[base])
+
+        complete = sorted(b for b in sets if has_archive(b))
+        kept = complete[-keep:] if keep > 0 else []
+        oldest_kept = kept[0] if kept else None
+
+        for base, members in sets.items():
+            if oldest_kept and base < oldest_kept:
+                doomed.extend(members)
+            elif base in kept:
+                doomed.extend(e for e in members if _VZDUMP_LEFTOVER_RE.match(e.name[len(base):]))
+            # else: newer incomplete set — backup in progress or not fully pulled yet
+
+    deleted = []
+    for entry in sorted(doomed):
+        if not dry_run:
+            if entry.is_dir() and not entry.is_symlink():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()
+        deleted.append(str(entry))
     return deleted
 
 
@@ -174,7 +304,7 @@ def _extract_group_key(base):
 
 # ── System-stamped mode ──
 
-def _apply_system_stamped(folder, template, extn_set, keep):
+def _apply_system_stamped(folder, template, extn_set, keep, dry_run=False):
     """Retention for system-stamped files."""
     # Find all stamped versions (real files matching stamped pattern)
     stamped_pattern = _template_to_glob(template, stamped=True)
@@ -212,11 +342,13 @@ def _apply_system_stamped(folder, template, extn_set, keep):
         for fname in to_delete:
             fpath = folder / fname
             if fpath.exists():
-                fpath.unlink()
+                if not dry_run:
+                    fpath.unlink()
                 deleted.append(str(fpath))
 
     # Re-link originals to newest remaining stamped version
-    _relink_originals(folder, template, extn_set)
+    if not dry_run:
+        _relink_originals(folder, template, extn_set)
 
     return deleted
 
@@ -379,6 +511,82 @@ if __name__ == "__main__":
         assert len(vmid108_files) == 6, f"Expected 6 vmid 108 files, got {len(vmid108_files)}"
 
         print("  pre-stamped (vzdump): OK")
+    finally:
+        shutil.rmtree(tmpdir)
+
+    # ── Test vzdump sets as PVE writes them (LXC .tar.zst, .notes, leftovers) ──
+    tmpdir = Path(tempfile.mkdtemp())
+    try:
+        from datetime import timedelta
+        D = [(datetime.now() - timedelta(days=8 - k)).strftime("%Y_%m_%d") for k in range(7)]
+        days = D[1:6]
+        for d in days:
+            b = f"vzdump-lxc-100-{d}-02_00_00"
+            for ext in [".tar.zst", ".tar.zst.notes", ".log"]:
+                (tmpdir / f"{b}{ext}").touch()
+            b = f"vzdump-qemu-200-{d}-02_00_00"
+            for ext in [".vma.zst", ".vma.zst.notes", ".log"]:
+                (tmpdir / f"{b}{ext}").touch()
+        # Kept set with stale leftovers from an overlapping sync
+        b = f"vzdump-qemu-200-{D[4]}-02_00_00"
+        (tmpdir / f"{b}.vma.dat").touch()
+        (tmpdir / f"{b}.tmp").mkdir()
+        (tmpdir / f"{b}.tmp" / "qemu-server.conf").touch()
+        # Newest set still in progress (no archive yet) — must be left alone
+        b = f"vzdump-qemu-200-{D[6]}-02_00_00"
+        (tmpdir / f"{b}.vma.dat").touch()
+        (tmpdir / f"{b}.tmp").mkdir()
+        # Old orphan leftover with no archive — ages out with its set
+        (tmpdir / f"vzdump-lxc-100-{D[0]}-02_00_00.tar.dat").touch()
+        # Non-vzdump file in the folder — untouched
+        (tmpdir / "OPNsense-241204A.zst").touch()
+
+        cfg = {"pattern": "vzdump-*", "extn_set": [".vma.zst", ".log", ".notes"], "keep": 3}
+
+        before = sorted(p.name for p in tmpdir.iterdir())
+        planned = apply_retention(tmpdir, cfg, dry_run=True)
+        assert sorted(p.name for p in tmpdir.iterdir()) == before, "dry_run deleted files"
+
+        deleted = apply_retention(tmpdir, cfg)
+        assert sorted(deleted) == sorted(planned), "dry_run plan differs from real run"
+        names = {Path(d).name for d in deleted}
+
+        # Each guest: 2 old sets × 3 files; lxc-100 also its 03_09 orphan; qemu-200 also 03_13 leftovers
+        assert len(deleted) == 6 + 1 + 6 + 2, f"Expected 15 deleted, got {len(deleted)}: {sorted(names)}"
+        for guest, arch in [("lxc-100", ".tar.zst"), ("qemu-200", ".vma.zst")]:
+            for d in [D[1], D[2]]:
+                assert f"vzdump-{guest}-{d}-02_00_00{arch}" in names
+                assert f"vzdump-{guest}-{d}-02_00_00{arch}.notes" in names
+            for d in [D[3], D[4], D[5]]:
+                assert (tmpdir / f"vzdump-{guest}-{d}-02_00_00{arch}").exists()
+                assert (tmpdir / f"vzdump-{guest}-{d}-02_00_00{arch}.notes").exists()
+        assert not (tmpdir / f"vzdump-qemu-200-{D[4]}-02_00_00.vma.dat").exists()
+        assert not (tmpdir / f"vzdump-qemu-200-{D[4]}-02_00_00.tmp").exists()
+        assert (tmpdir / f"vzdump-qemu-200-{D[6]}-02_00_00.vma.dat").exists()
+        assert (tmpdir / f"vzdump-qemu-200-{D[6]}-02_00_00.tmp").exists()
+        assert (tmpdir / "OPNsense-241204A.zst").exists()
+
+        # Second run is a no-op
+        assert apply_retention(tmpdir, cfg) == []
+        print("  vzdump sets (lxc/qemu, notes, leftovers): OK")
+
+        # Pruned list: whole sets only, no leftovers from kept sets
+        record_pruned(tmpdir, deleted)
+        listed = _read_pruned(tmpdir / PRUNED_LIST)
+        assert sorted(listed) == sorted([
+            f"vzdump-lxc-100-{D[0]}-02_00_00",
+            f"vzdump-lxc-100-{D[1]}-02_00_00", f"vzdump-lxc-100-{D[2]}-02_00_00",
+            f"vzdump-qemu-200-{D[1]}-02_00_00", f"vzdump-qemu-200-{D[2]}-02_00_00",
+        ]), f"Unexpected pruned list: {listed}"
+        text = (tmpdir / PRUNED_LIST).read_text()
+        assert text.startswith(f"/{PRUNED_LIST}\n")
+        assert f"/vzdump-lxc-100-{D[1]}-02_00_00*\n" in text
+        assert pruned_exclude_file(tmpdir) == tmpdir / PRUNED_LIST
+
+        # Entries past max age are dropped
+        record_pruned(tmpdir, [str(tmpdir / "vzdump-lxc-100-2020_01_01-00_00_00.tar.zst")])
+        assert "vzdump-lxc-100-2020_01_01-00_00_00" not in _read_pruned(tmpdir / PRUNED_LIST)
+        print("  pruned list: OK")
     finally:
         shutil.rmtree(tmpdir)
 
