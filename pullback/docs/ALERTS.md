@@ -2,7 +2,7 @@
 
 ## Overview
 
-pibak sends email alerts via SMTP to notify of backup events. Sends directly
+pullback sends email alerts via SMTP to notify of backup events. Sends directly
 to the local mailcow instance on the home network — no authentication required.
 Uses Python stdlib `smtplib` — no dependencies.
 
@@ -13,7 +13,7 @@ email:
   enabled: true
   smtp_host: mailcow.home
   smtp_port: 25
-  from: pibak@home
+  from: pullback@home
   to: admin@example.com
   on_failure: true
   on_success: false
@@ -26,7 +26,7 @@ email:
 
 Triggered when a source sync fails (any folder).
 
-**Subject:** `[pibak] FAILED: pve`
+**Subject:** `[pullback] FAILED: pve`
 
 **Body:**
 ```
@@ -48,7 +48,7 @@ Successful folders:
 Triggered when all folders in a source complete successfully.
 Only sent if `on_success: true`.
 
-**Subject:** `[pibak] OK: pve`
+**Subject:** `[pullback] OK: pve`
 
 **Body:**
 ```
@@ -68,7 +68,7 @@ Folders:
 
 Triggered when ransomware check fails for a folder.
 
-**Subject:** `[pibak] RANSOMWARE WARNING: pve/shares/dis`
+**Subject:** `[pullback] RANSOMWARE WARNING: pve/shares/dis`
 
 **Body:**
 ```
@@ -87,12 +87,12 @@ Action: Investigate the remote files before re-enabling sync.
 
 Triggered when engine.py starts and no backup volume is mounted.
 
-**Subject:** `[pibak] NO VOLUME: /backup not mounted`
+**Subject:** `[pullback] NO VOLUME: /backup not mounted`
 
 **Body:**
 ```
 No backup volume detected at /backup.
-Flag file .pibak-volume not found.
+Flag file .pullback-volume not found.
 
 Check USB drive connection.
 ```
@@ -128,7 +128,7 @@ Called from:
 - Plain text only (no HTML)
 - `From:` from config
 - `To:` from config
-- `Subject:` prefixed with `[pibak]`
+- `Subject:` prefixed with `[pullback]`
 - `Date:` header set
 - UTF-8 encoding
 

@@ -14,7 +14,7 @@ Dark GitHub-style theme. Monospace font. Minimal, functional, no frameworks.
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  pibak                              [Run All]   │
+│  pullBack                           [Run All]   │
 ├─────────────────────────────────────────────────┤
 │  System                                         │
 │  CPU: 61%  DISK: 44 MB/s  NET: 53 MB/s         │
@@ -158,7 +158,7 @@ Listens on `0.0.0.0:<web_port>` (default 8080 from config).
 
 ```ini
 [Unit]
-Description=pibak web dashboard
+Description=pullback web dashboard
 
 [Service]
 ExecStart=/usr/share/pac/venv/bin/python3 /usr/share/pac/web.py

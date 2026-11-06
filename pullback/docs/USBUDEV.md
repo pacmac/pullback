@@ -2,23 +2,30 @@
 
 ## Overview
 
-Backup drives are USB HDDs plugged into the Pi. A drive must be initialised once
-(format + flag file), after which it is auto-mounted on plug-in via udev.
-Drives are swappable — any flagged drive inherits the `/backup` mount point.
+Backup drives are USB HDDs plugged into the Pi. A drive is initialised once
+(format + flag file) with `hd-init.sh --format`, after which it mounts at
+`/backup` automatically on plug-in. Drives are swappable — any flagged drive
+inherits the mount point.
+
+**Nothing here ever formats a drive.** Formatting happens only in
+`hd-init.sh --format`, interactively, after typing `YES`.
 
 ## Setup
 
-On the Pi:
+```
+sudo bash pullback/scripts/udev-install.sh     # once, on the Pi
+```
 
-1. `bash/udev-install.sh` — one-time: installs the udev rule
+It installs `udev/99-pullback-usb.rules` into `/etc/udev/rules.d/`, writes
+`/etc/systemd/system/pullback-mount@.service` with the real path of
+`udev-mount.sh`, reloads udev and systemd.
 
-That's it. After this, any USB drive plugged in is handled automatically:
+After that:
 
-- **Known drive** (has flag file): mounted at `/backup`
-- **New drive** (no flag file): auto-formatted, flag file created, mounted at `/backup`
-
-This Pi is a dedicated backup appliance. Any USB drive plugged in is assumed
-to be a backup drive. There is no manual step.
+- **Known drive** (flag file present): mounted at `/backup`.
+- **Unflagged drive**: mounted briefly, flag file not found, unmounted and
+  refused. Log line tells you to run `hd-init.sh <dev> --format`.
+- **Not a filesystem**: ignored.
 
 ## Config fields (config.yaml)
 
@@ -26,117 +33,104 @@ to be a backup drive. There is no manual step.
 mount_point: /backup          # where the active backup drive is mounted
 
 usb:
-  flag_file: .pibak-volume    # file placed on root of drive after init
-  filesystem: ext4            # format type
-  reserved_pct: 1             # ext4 reserved block percentage
+  flag_file: .pullback-volume # file on the root of the drive marking it ours
+  filesystem: ext4            # used by hd-init.sh --format
+  reserved_pct: 1             # ext4 reserved block percentage (hd-init.sh)
 ```
 
-All values come from config.yaml — nothing hardcoded in scripts.
+`udev-mount.sh` reads `mount_point` and `flag_file` from `config.yaml` with
+grep/awk. Nothing is hardcoded in the scripts.
 
 ## Flag file
 
-- File: `<mount_point>/<flag_file>` (e.g. `/backup/.pibak-volume`)
-- Created by `hd-init.sh --format` on first init
-- Checked by udev mount script and by engine.py before sync
-- Contains: single line with ISO timestamp of when the drive was initialised
-- A drive without this file is NOT a pibak volume and must not be auto-mounted
-
-## Scripts
-
-### bash/hd-init.sh
-
-Optional manual fallback. Not needed for normal operation — udev-mount.sh
-handles everything automatically. Use this only if you want to manually
-init a drive with interactive confirmation.
-
-**Usage:** `hd-init.sh <device> [--format]`
-
-Reads config values from config.yaml via grep/awk.
-
-### bash/udev-install.sh
-
-Installs the udev rule. Run once on the Pi.
-
-1. Copies `udev/99-pibak-usb.rules` to `/etc/udev/rules.d/`
-2. Runs `udevadm control --reload-rules`
-3. Runs `udevadm trigger`
-4. Reports success
-
-### bash/udev-mount.sh
-
-Called by the udev rule. Handles both known and new drives automatically.
-
-1. Receives device path from udev environment (`$DEVNAME`)
-2. Reads config.yaml for `mount_point`, `flag_file`, `filesystem`, `reserved_pct`
-3. If already mounted at mount point → skip
-4. Gets UUID of the device
-
-**Known drive** (UUID found in fstab):
-5. Mount it
-6. Verify `<flag_file>` exists → if missing, unmount and error
-7. Log success
-
-**New drive** (UUID not in fstab):
-5. Format as `usb.filesystem` with `-m <reserved_pct>`, label `pibak`
-6. Get new UUID after format
-7. Add fstab entry (UUID-based, `noatime,commit=60,nofail`)
-8. Mount it
-9. Create `<flag_file>` with init timestamp
-10. Log success
-
-**Important:** udev scripts run in a restricted environment. No interactive
-prompts. All output via `logger` to syslog.
+- Path: `<mount_point>/<flag_file>` (e.g. `/backup/.pullback-volume`)
+- Written by `hd-init.sh --format` (an ISO timestamp)
+- Checked by `udev-mount.sh` after mounting and by `engine.py` before a sync
+- A drive without it is NOT a pullback volume and is never kept mounted
 
 ## udev rule
 
-File: `udev/99-pibak-usb.rules`
+File: `udev/99-pullback-usb.rules`. It does not use `RUN+=` (udev blocks
+device access while RUN runs). It tags the device for systemd and starts a
+service instead:
 
 ```
-# Auto-mount pibak backup drives on USB plug-in
-ACTION=="add", SUBSYSTEM=="block", KERNEL=="sd[a-z][0-9]", \
-  RUN+="/usr/share/pac/pibak/bash/udev-mount.sh"
+ACTION=="add", SUBSYSTEM=="block", KERNEL=="sd[a-z]", ENV{DEVTYPE}=="disk", \
+  TAG+="systemd", ENV{SYSTEMD_WANTS}="pullback-mount@%k.service"
+ACTION=="add", SUBSYSTEM=="block", KERNEL=="sd[a-z][0-9]", ENV{DEVTYPE}=="partition", \
+  TAG+="systemd", ENV{SYSTEMD_WANTS}="pullback-mount@%k.service"
 ```
 
-- Triggers on partition add (not whole disk)
-- Path in RUN uses the Pi path (`/usr/share/pac/`), not the dev server path
-- Only fires for `sd*` devices (USB HDDs)
+Both whole disks and partitions trigger it, because the drive may carry the
+filesystem directly on the disk.
+
+## Scripts (`pullback/scripts/`)
+
+### udev-install.sh
+
+Installs the rule and the templated service (see Setup). Detects paths from
+where it is run.
+
+### udev-mount.sh
+
+Started by `pullback-mount@<dev>.service` with `DEVNAME=/dev/<dev>`. Unattended:
+no prompts, output via `logger -t pullback-udev` (read it with
+`journalctl -t pullback-udev`). Mount-only — does not touch fstab, does not
+format.
+
+1. Read `mount_point` and `flag_file` from `config.yaml`.
+2. **Something already mounted at the mount point?**
+   - Readable (`timeout 5 ls -A` succeeds) -> log `already mounted, skipping`, exit.
+   - **Unreadable** (EIO or no answer in 5 s) -> a *dead mount*: log it,
+     `umount -l` it, continue. This happens when the drive loses power and
+     re-enumerates as a new `sdX` while the old mount stays behind with ext4
+     `shutdown` set. Before this rule, every later plug-in was skipped until
+     someone ran `umount -l /backup` by hand.
+3. `mount -o noatime,commit=60 <dev> <mount_point>`; if it will not mount, log
+   and ignore.
+4. Flag file present -> keep mounted. Absent -> `umount`, refuse.
+
+Test: `bash pullback/tests/test_udev_stale_mount.sh` (shims every mount call;
+touches nothing real).
+
+### hd-init.sh
+
+Manual, interactive. `hd-init.sh <device> [--format]` — formats (after
+typing `YES`), labels `pullback`, writes the flag file. The only place a drive
+is ever formatted.
 
 ## Engine pre-sync check
 
-Before syncing, engine.py must verify:
-
-```python
-flag = Path(cfg["mount_point"]) / cfg["usb"]["flag_file"]
-if not flag.exists():
-    log.error("No backup volume mounted — aborting")
-    sys.exit(1)
-```
-
-This goes at the top of `run_all()`, before iterating sources.
+`engine.py` checks `<mount_point>/<flag_file>` before syncing and aborts with
+a logged error if it is missing or the mount returns an I/O error.
 
 ## Drive swap workflow
 
-1. Unplug old drive (unmounts automatically or via `umount /backup`)
-2. Plug in new drive
-3. udev fires → `udev-mount.sh` runs → mounts at `/backup`
-4. Next sync run writes to the new drive
-5. Local state files are unaffected (they live in the project folder, not on the drive)
+1. Unplug the old drive (`umount /backup` first if you can; if not, the next
+   plug-in detaches the dead mount itself).
+2. Plug in the new, flagged drive.
+3. udev -> `pullback-mount@sdX.service` -> `udev-mount.sh` mounts it at `/backup`.
+4. The next sync writes to the new drive. State files live in the project
+   folder, not on the drive.
 
 ## File layout
 
 ```
-pibak/
+pullback/
   udev/
-    99-pibak-usb.rules
-  bash/
-    hd-init.sh          # manual init (format + flag)
-    udev-install.sh     # install udev rule
-    udev-mount.sh       # called by udev on plug-in
+    99-pullback-usb.rules
+    pullback-mount@.service    # template; udev-install.sh writes the real one
+  scripts/
+    hd-init.sh                 # manual init (format + flag)
+    udev-install.sh            # install rule + service
+    udev-mount.sh              # mount / refuse / replace a dead mount
+  tests/
+    test_udev_stale_mount.sh
 ```
 
 ## Not in scope
 
-- Partition creation (user provides a partition device like `/dev/sda1`)
+- Partition creation
 - RAID / multi-drive
-- Drive health monitoring
+- Drive health monitoring (SMART is not installed on the Pi)
 - Encrypted volumes

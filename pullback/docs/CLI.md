@@ -2,9 +2,9 @@
 
 ## Overview
 
-`cli.py` is the command-line interface for pibak. It provides sync execution with
+`cli.py` is the command-line interface for pullback. It provides sync execution with
 live console progress, status checks, and cancel support. It is the primary way
-to run and test pibak before the web dashboard is built.
+to run and test pullback before the web dashboard is built.
 
 ## Usage
 
@@ -106,7 +106,7 @@ Optional `--config PATH` override on all commands.
 ## File
 
 ```
-pibak/
+pullback/
   cli.py              # CLI entry point
 ```
 

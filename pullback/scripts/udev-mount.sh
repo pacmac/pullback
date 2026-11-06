@@ -3,7 +3,8 @@
 # Called by udev rule. Runs in restricted environment — no interactive prompts.
 # Logs to syslog via logger.
 #
-# 1. Already mounted? Skip.
+# 1. Already mounted? Probe it. Readable -> skip. Unreadable (dead mount left
+#    behind by a vanished drive) -> umount -l, then carry on to step 2.
 # 2. Try to mount the device, check for flag file:
 #    - Flag found: keep mounted.
 #    - No flag: unmount, refuse. Use hd-init.sh --format for new drives.
@@ -37,8 +38,15 @@ DEVICE="${DEVNAME:-}"
 # ── Already mounted? ──
 
 if mountpoint -q "$MOUNT_POINT" 2>/dev/null; then
-    log "${MOUNT_POINT} already mounted, skipping"
-    exit 0
+    # A mount can outlive its device (USB power drop -> drive re-enumerates as a
+    # new sdX while the old mount stays, ext4 'shutdown', every read EIO).
+    # Probe it: healthy -> leave it alone; dead -> detach it and carry on.
+    if timeout 5 ls -A "$MOUNT_POINT" >/dev/null 2>&1; then
+        log "${MOUNT_POINT} already mounted, skipping"
+        exit 0
+    fi
+    log "${MOUNT_POINT} is mounted but unreadable (dead mount) — detaching"
+    umount -l "$MOUNT_POINT" 2>/dev/null || die "cannot detach dead mount at ${MOUNT_POINT}"
 fi
 
 # ── Try to mount and check for flag file ──

@@ -1,0 +1,30 @@
+# Every accusation this repo is under, and what trying it proved.
+# Written only by ~/.claude/hooks/idiot.py. Verdicts are derived, never typed.
+- id: the-udev-mount-script-skips-a-dead-mount-instead-of-replacing-it
+  type: bug
+  what: udev-mount.sh treats any mount at /backup as healthy, so a dead (EIO) mount blocks remounting
+    a re-enumerated drive
+  spec: pullback/docs/specs/udev-stale-mount.md
+  files:
+  - pullback/scripts/udev-mount.sh
+  test:
+    command:
+    - bash
+    - pullback/tests/test_udev_stale_mount.sh
+    criterion: dead mount is detached with umount -l and the new drive mounted; healthy mounts are left
+      alone
+    runs: 1
+  trial:
+    file: .proofs/the-udev-mount-script-skips-a-dead-mount-instead-of-replacing-it.trial.txt
+    exit: 1
+    runs: 1
+    failures: 1
+    at: '2026-11-06T23:24:53.099'
+    commit: 980b454-dirty
+  fix:
+    file: .proofs/the-udev-mount-script-skips-a-dead-mount-instead-of-replacing-it.fix.txt
+    exit: 0
+    runs: 1
+    failures: 0
+    at: '2026-11-06T23:25:04.950'
+    commit: 980b454-dirty

@@ -1,0 +1,4 @@
+$ bash pullback/tests/test_udev_stale_mount.sh
+FAIL: dead mount: dead mount NOT replaced — umount -l=no mount=no logged_mounted=no logged_skip=yes rc=0
+PASS: healthy mount, flag file present: healthy mount left alone (no umount, no mount, 'already mounted' logged)
+PASS: healthy mount, no flag file: healthy mount left alone (no umount, no mount, 'already mounted' logged)
